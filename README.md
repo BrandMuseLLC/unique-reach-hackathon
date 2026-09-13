@@ -33,3 +33,12 @@ docker run --rm -p 127.0.0.1:8033:8080 unique-reach-demo
 ```
 
 This is a first-milestone source submission, not a hosted service. Sponsored Google hosting is in progress.
+
+## Real-data path (in progress)
+
+Beyond the synthetic demo, the app runs on an observed aggregate of public YouTube comment overlap
+(`MUSE_DATASET=observed`, optional `MUSE_OBSERVED_DATA=<aggregate>`). `collect/` builds that aggregate for a
+vertical we collect ourselves with the official YouTube Data API; see `collect/README.md`. In observed mode the
+app adds audience clusters, a "Why not…?" panel, and a sponsor-conflict filter. Live AI (brief interpretation,
+cluster names, grounded explanations) needs a server-side model credential; verify it with
+`python3 scripts/verify_live_ai.py`. Nothing in this section has been run against live YouTube or a live model yet.
