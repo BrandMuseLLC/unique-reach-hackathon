@@ -15,9 +15,12 @@ else:
 
 
 class RealDataProvider:
-    def __init__(self, data, *, topics=('Science', 'Technology')):
+    def __init__(self, data, *, topics=None):
         if data.get('metadata', {}).get('kind') != 'observed':
             raise PlanError('The real-data provider requires explicitly observed source data.')
+        campaign=data['metadata'].get('campaign')
+        if topics is None:
+            topics=tuple(campaign['eligibleCategories']) if campaign else ('Science', 'Technology')
         self.planner=Planner(data)
         if any(not c['cost'].is_integer() for c in self.planner.creators):
             raise PlanError('The host API requires whole-dollar dataset quotes.')
@@ -27,9 +30,10 @@ class RealDataProvider:
         if not self.topics or set(self.topics)-{c['community'] for c in self.planner.creators}:
             raise PlanError('Case-study topics must exist in the supplied dataset.')
         self.eligible={c['id'] for c in self.planner.creators if c['community'] in self.topics}
-        self.campaign={'id':'public-science-engineering-case-study','name':'Science & engineering · historical case study',
-                       'category':'Science and technology content','audience':'Illustrative brief for curious adults; audience interests and geography unverified.',
-                       'eligibleCategories':list(self.topics)}
+        self.campaign=({key:campaign[key] for key in ('id','name','category','audience')} | {'eligibleCategories':list(self.topics)} if campaign else
+                       {'id':'public-science-engineering-case-study','name':'Science & engineering · historical case study',
+                        'category':'Science and technology content','audience':'Illustrative brief for curious adults; audience interests and geography unverified.',
+                        'eligibleCategories':list(self.topics)})
         self.dataset_label='Observed public historical YouTube sample · %d channels · client-neutral case study.'%len(self.planner.creators)
         self.metric_label='Uncalibrated view-scaled commenter-overlap score; not validated unique viewers'
         self.creator_metric_labels={'views':'Historical median video views','price':'Hypothetical quote (USD)','rawViews':'Total historical median views'}
@@ -37,6 +41,12 @@ class RealDataProvider:
     @classmethod
     def bundled(cls):
         return cls(json.loads((Path(__file__).parent/'data/exposure-aggregate.json').read_text()))
+
+    @classmethod
+    def from_env(cls, environ):
+        # MUSE_OBSERVED_DATA points at a collected aggregate (python3 -m collect build); default is the bundled sample.
+        path=environ.get('MUSE_OBSERVED_DATA')
+        return cls(json.loads(Path(path).read_text())) if path else cls.bundled()
 
     def _eligibility(self, c):
         if c['id'] in self.eligible:
@@ -65,6 +75,7 @@ class RealDataProvider:
                          'estimatedViews':c['views'],'viewsBasis':'Median historical views per sampled video; view events, not sponsored reach.',
                          'baseCost':int(c['cost']),'costBasis':'Hypothetical case-study quote; editable, not a researched rate.',
                          'commenterCount':c['commenter_count'],'videoCount':c.get('video_count'),
+                         'sponsorMentions':c.get('sponsor_mentions'),
                          'sourceUrl':self.planner.metadata.get('source_url')})
         baseline=self.planner.optimize({'budget':10000,'objective':'viewer_proxy',
                                        'exclude':[c['id'] for c in self.planner.creators if c['id'] not in self.eligible]})['baselines']['top_views']

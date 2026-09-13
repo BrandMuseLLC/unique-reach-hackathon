@@ -22,7 +22,7 @@ from .snapshots import create_snapshot_writer
 
 
 settings = auth_settings()
-real_provider = RealDataProvider.bundled() if os.environ.get("MUSE_DATASET") == "observed" else None
+real_provider = RealDataProvider.from_env(os.environ) if os.environ.get("MUSE_DATASET") == "observed" else None
 CREATOR_METRIC_LABELS = {
     "views": "Expected video views",
     "price": "Sponsorship fee (USD)",
