@@ -67,7 +67,7 @@ export function WhyNotPanel({ rows, stale, aiEnabled = false, onAsk }: {
           <input aria-label="Question about this plan" maxLength={500} value={question} onChange={(event) => setQuestion(event.target.value)}
             placeholder={`Why ${row.creatorName} is not in the plan?`} />
         </label>
-        <button onClick={() => void ask()} disabled={!aiEnabled || asking || stale || !question.trim()} title={aiEnabled ? 'Answer from this plan\'s numbers' : 'Live AI is not configured'}>
+        <button className="btn-primary" onClick={() => void ask()} disabled={!aiEnabled || asking || stale || !question.trim()} title={aiEnabled ? 'Answer from this plan\'s numbers' : 'Live AI is not configured'}>
           {asking ? 'Answering…' : 'Ask AI'}
         </button>
         <p role="status">{answer || (aiEnabled ? 'Answers use only this plan\'s numbers; an answer citing any other number is withheld.' : 'Live AI is not configured; the panel above is computed without it.')}</p>

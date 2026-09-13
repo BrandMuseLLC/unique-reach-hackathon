@@ -92,9 +92,9 @@ function OverlapNetwork({ aiEnabled }: { aiEnabled: boolean }) {
           {visible.map((p, i) => {
             const angle = -Math.PI / 2 + i * Math.PI * 2 / visible.length;
             const x = 460 + Math.cos(angle) * 310, y = 290 + Math.sin(angle) * 205;
-            return <line key={p.other} x1="460" y1="290" x2={x} y2={y} stroke={p.other === active?.other ? '#6b44c6' : '#c7bddc'} strokeWidth={1 + 9 * p.jaccard} />;
+            return <line key={p.other} x1="460" y1="290" x2={x} y2={y} stroke={p.other === active?.other ? '#a78bfa' : '#3b3552'} strokeWidth={1 + 9 * p.jaccard} />;
           })}
-          <circle cx="460" cy="290" r="24" fill="#252033" />
+          <circle cx="460" cy="290" r="24" fill="#8b5cf6" />
           <text x="460" y="335" textAnchor="middle" className="explore-node-label">{center.name}</text>
           {visible.map((p, i) => {
             const angle = -Math.PI / 2 + i * Math.PI * 2 / visible.length;
@@ -103,7 +103,7 @@ function OverlapNetwork({ aiEnabled }: { aiEnabled: boolean }) {
             return <g key={p.other} className="explore-node" role="button" tabIndex={0} aria-pressed={selected}
               aria-label={`Inspect ${center.name} and ${nodes.get(p.other)?.name}: ${number(p.sharedCommenters)} shared commenters, ${percent(p.jaccard)} Jaccard`}
               onClick={() => setPartner(p.other)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPartner(p.other); } }}>
-              <circle cx={x} cy={y} r="24" fill={selected ? '#6b44c6' : '#eee8f8'} stroke="#6b44c6" strokeWidth={selected ? 3 : 1} />
+              <circle cx={x} cy={y} r="24" fill={selected ? '#a78bfa' : '#1a1a24'} stroke="#a78bfa" strokeWidth={selected ? 3 : 1} />
               <text x={x} y={y + 43} textAnchor="middle" className="explore-node-label">{nodes.get(p.other)?.name}</text>
               <text x={x} y={y + 62} textAnchor="middle" className="explore-edge-label">{number(p.sharedCommenters)} shared · {percent(p.jaccard)}</text>
             </g>;

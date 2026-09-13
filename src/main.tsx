@@ -5,7 +5,8 @@ import './styles.css';
 import { ExploreOverlap } from './ExploreOverlap';
 import { SponsorConflicts, type SponsorMentions } from './SponsorConflicts';
 import { WhyNotPanel, type WhyNot } from './WhyNotPanel';
-import blackWordmark from '../brandmuse/assets/brand-muse-wordmark-black.png';
+import { Glance } from './Glance';
+import whiteWordmark from '../brandmuse/assets/brand-muse-wordmark-white.jpg';
 
 type Creator = {
   id: string;
@@ -316,6 +317,8 @@ function App() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [creatorMetricLabels, setCreatorMetricLabels] = useState<CreatorMetricLabels>(DEFAULT_CREATOR_METRIC_LABELS);
   const [activeCreatorId, setActiveCreatorId] = useState('');
+  const [planFilter, setPlanFilter] = useState<'all' | 'recommended' | 'roster' | 'left'>('all');
+  const [expandedId, setExpandedId] = useState('');
   const planRequestId = useRef(0);
   const latestInputs = useRef<PlanInputs>({ budget, currentRoster, include, exclude, costs, planningContext });
 
@@ -599,255 +602,231 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <img className="wordmark" src={blackWordmark} alt="Brand Muse" />
-          <p>Unique Reach planner for YouTube sponsorship rosters</p>
+          <img className="wordmark" src={whiteWordmark} alt="Brand Muse" />
+          <p>See where creator audiences overlap before you spend.</p>
         </div>
         <button className="primary" onClick={() => void runPlan()} disabled={loading || creators.length === 0}>
           {loading ? <RefreshCw className="spin" size={18} /> : <Sparkles size={18} />}
-          Run audit and optimize
+          Run plan
         </button>
       </header>
 
-      <section className="panel" aria-label="Campaign brief assistant">
-        <div className="panel-heading compact">
-          <h2>Campaign brief</h2>
-          <p>{aiStatus.message} Relevance weights assess topics, not individual interests or purchase intent.</p>
-        </div>
-        <div className="save-card">
-        <label>
-          <span>Describe the product and planning changes</span>
-          <input aria-label="Campaign brief message" maxLength={2000} value={aiMessage}
-            onChange={event => setAiMessage(event.target.value)}
-            placeholder={result ? `${result.campaign.category}: describe the product, then assess topic relevance or change constraints.` : 'Describe the product and any constraints to apply.'} />
-        </label>
-        <button className="primary" onClick={() => void interpretBrief()} disabled={!aiStatus.enabled || aiBusy || loading || !aiMessage.trim() || creators.length === 0}>
-          {aiBusy ? 'Interpreting brief…' : 'Apply brief with AI'}
-        </button>
-        <p role="status">{aiReply}</p>
-        </div>
-        {planningContext.brandDescription && <p>Applied brief: {planningContext.brandDescription}</p>}
-        {Object.keys(planningContext.relevance).length > 0 && <p>
-          Topic weights: {Object.entries(planningContext.relevance).map(([topic, weight]) => `${topic}: ${weight.toFixed(2)}`).join(' · ')}
-        </p>}
-        {Object.keys(planningContext.maxPerGroup).length > 0 && <p>
-          Topic caps: {Object.entries(planningContext.maxPerGroup).map(([topic, cap]) => `${topic}: ${cap}`).join(' · ')}
-        </p>}
-        {(planningContext.brandDescription || Object.keys(planningContext.relevance).length > 0 || Object.keys(planningContext.maxPerGroup).length > 0) &&
-          <button disabled={aiBusy || loading} onClick={() => { setPlanningContext(EMPTY_CONTEXT); setAiReply(''); void runPlan({ planningContext: EMPTY_CONTEXT }); }}>Clear brief and topic adjustments</button>}
-      </section>
-
-      <SponsorConflicts creators={creators} exclude={exclude} disabled={aiBusy || loading} onExclude={(ids) => {
-        const nextExclude = [...new Set([...exclude, ...ids])];
-        const nextInclude = include.filter((id) => !ids.includes(id));
-        setExclude(nextExclude);
-        setInclude(nextInclude);
-        void runPlan({ exclude: nextExclude, include: nextInclude });
-      }} />
-
-      <section className="control-strip">
-        <label className="budget-control">
-          <span>Planning budget</span>
-          <MoneyInput value={budget} onChange={setBudget} ariaLabel="Planning budget" />
-        </label>
-        <div className="metric-note">
-          <strong>{result?.metricLabel ?? 'Overlap-adjusted reach proxy'}</strong>
-          <span>{datasetLabel}</span>
-        </div>
-        {result && (
-          <div className="campaign-card">
-            <strong>{result.campaign.name}</strong>
-            <span>{result.campaign.category} · {result.campaign.audience}</span>
+      <section className="setup" aria-label="Campaign setup">
+        <div className="setup-row setup-basics">
+          <div className="card">
+            <span className="card-label">Budget</span>
+            <MoneyInput value={budget} onChange={setBudget} ariaLabel="Planning budget" />
+            <small>Creator quotes are editable in the roster below.</small>
           </div>
-        )}
-        <div className="save-card">
-          <label>
-            <span>Saved demo campaign</span>
-            <input value={campaignName} onChange={(event) => setCampaignName(event.target.value)} />
-          </label>
-          <select value={activeCampaignId} onChange={(event) => void loadCampaign(event.target.value)} aria-label="Load saved campaign">
-            <option value="">New campaign</option>
-            {savedCampaigns.map((campaign) => (
-              <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
-            ))}
-          </select>
-          <div className="save-actions">
-            <button onClick={saveCampaign} title="Save demo campaign">
-              <Save size={15} />
-              Save
-            </button>
-            <button onClick={deleteCampaign} disabled={!activeCampaignId} title="Delete selected demo campaign">
-              <Trash2 size={15} />
-              Delete
-            </button>
+          <div className="card">
+            <span className="card-label">Campaign</span>
+            <strong className="card-title">{result?.campaign.name ?? defaultCampaignName}</strong>
+            <small>{creators.length} YouTube channels · audience overlap from public comments</small>
           </div>
-          <p className={saveMessage ? undefined : 'sr-only'} aria-live="polite">{saveMessage || 'Campaign status'}</p>
+          <div className="card save-card">
+            <span className="card-label">Saved campaigns</span>
+            <div className="save-inline">
+              <input aria-label="Campaign name" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} />
+              <select value={activeCampaignId} onChange={(event) => void loadCampaign(event.target.value)} aria-label="Load saved campaign">
+                <option value="">New campaign</option>
+                {savedCampaigns.map((campaign) => (
+                  <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="save-actions">
+              <button className="btn-secondary" onClick={saveCampaign}><Save size={15} />Save</button>
+              <button className="btn-ghost" onClick={deleteCampaign} disabled={!activeCampaignId}><Trash2 size={15} />Delete</button>
+            </div>
+            <p className={saveMessage ? 'card-status' : 'sr-only'} aria-live="polite">{saveMessage || 'Campaign status'}</p>
+          </div>
+        </div>
+
+        <div className="setup-row setup-tools">
+          <section className="card tool-card" aria-label="Campaign brief assistant">
+            <div className="tool-head">
+              <h2>Describe your campaign</h2>
+              <span className={`pill ${aiStatus.enabled ? 'pill-on' : ''}`}>{aiStatus.enabled ? 'AI ready' : 'AI off'}</span>
+            </div>
+            <p className="tool-help">Write a plain-English brief. Gemini turns it into planning settings and the plan re-runs.</p>
+            <textarea aria-label="Campaign brief message" maxLength={2000} rows={3} value={aiMessage}
+              onChange={event => setAiMessage(event.target.value)}
+              placeholder="e.g. Launching a sub-$500 espresso machine for beginners. Focus on espresso and latte art creators, skip retailers." />
+            <div className="tool-actions">
+              <button className="btn-primary" onClick={() => void interpretBrief()} disabled={!aiStatus.enabled || aiBusy || loading || !aiMessage.trim() || creators.length === 0}>
+                {aiBusy ? <RefreshCw className="spin" size={15} /> : <Sparkles size={15} />}
+                {aiBusy ? 'Planning…' : 'Plan with AI'}
+              </button>
+              {(planningContext.brandDescription || Object.keys(planningContext.relevance).length > 0 || Object.keys(planningContext.maxPerGroup).length > 0) &&
+                <button className="btn-ghost" disabled={aiBusy || loading} onClick={() => { setPlanningContext(EMPTY_CONTEXT); setAiReply(''); void runPlan({ planningContext: EMPTY_CONTEXT }); }}>Clear AI settings</button>}
+            </div>
+            {aiReply && <p className="tool-reply" role="status">{aiReply}</p>}
+            {(Object.keys(planningContext.relevance).length > 0 || Object.keys(planningContext.maxPerGroup).length > 0) && (
+              <div className="chips" aria-label="Settings from the brief">
+                {Object.entries(planningContext.relevance).sort((a, b) => b[1] - a[1]).map(([topic, weight]) => (
+                  <span className="chip" key={topic}>{topic} <b>{Math.round(weight * 100)}%</b></span>
+                ))}
+                {Object.entries(planningContext.maxPerGroup).map(([topic, cap]) => (
+                  <span className="chip chip-cap" key={`cap-${topic}`}>{topic} max <b>{cap}</b></span>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <SponsorConflicts creators={creators} exclude={exclude} disabled={aiBusy || loading} onExclude={(ids) => {
+            const nextExclude = [...new Set([...exclude, ...ids])];
+            const nextInclude = include.filter((id) => !ids.includes(id));
+            setExclude(nextExclude);
+            setInclude(nextInclude);
+            void runPlan({ exclude: nextExclude, include: nextInclude });
+          }} />
         </div>
         {error && <div className="error" role="alert">{error}</div>}
       </section>
 
+      {result && <Glance key={`${result.recommended.ids.join('|')}-${result.budget}-${result.current.ids.join('|')}`} result={result} creatorCount={creators.length} />}
+
       <section className="workspace">
-        <div className="panel roster-panel">
-          <div className="panel-heading">
-            <h1>Roster Editor</h1>
-            <p>Edit shortlist, price, and constraints from one dense grid.</p>
-          </div>
-
-          <div className="roster-toolbar" aria-label="Roster filters">
-            <label className="search-control">
-              <Search size={16} />
-              <span className="sr-only">Search creators</span>
-              <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search creators" />
-            </label>
-            <label className="filter-control">
-              <ListFilter size={16} />
-              <span className="sr-only">Filter by campaign fit</span>
-              <select value={fitFilter} onChange={(event) => setFitFilter(event.target.value as FitFilter)} aria-label="Filter by campaign fit">
-                <option value="all">All fits</option>
-                <option value="eligible">Eligible</option>
-                <option value="unknown">Unknown</option>
-                <option value="ineligible">Ineligible</option>
-              </select>
-            </label>
-            <label className="filter-control">
-              <ArrowUpDown size={16} />
-              <span className="sr-only">Sort roster</span>
-              <select value={`${sortKey}:${sortDirection}`} onChange={(event) => updateSortControl(event.target.value)} aria-label="Sort roster">
-                <option value="fit:asc">Fit</option>
-                <option value="creator:asc">Creator A-Z</option>
-                <option value="creator:desc">Creator Z-A</option>
-                <option value="evidence:asc">Evidence quality</option>
-                <option value="views:desc">Views high-low</option>
-                <option value="views:asc">Views low-high</option>
-                <option value="cost:asc">Quote low-high</option>
-                <option value="cost:desc">Quote high-low</option>
-              </select>
-            </label>
-            <button className={`toggle-filter ${selectedOnly ? 'active' : ''}`} type="button" aria-pressed={selectedOnly} onClick={() => setSelectedOnly((value) => !value)}>
-              Selected only
-            </button>
-            <button className="icon-text-button" type="button" onClick={resetRosterFilters} title="Clear roster filters">
-              <X size={15} />
-              Clear
-            </button>
-            <div className={`roster-summary ${selectedSpend > budget ? 'over-budget' : ''}`} aria-live="polite">
-              <strong>{currentRoster.length}</strong> selected · {formatMoney(selectedSpend)} spend · {filteredCreators.length} shown
+        <div className="panel roster-panel creators-panel">
+          <div className="creators-head">
+            <div>
+              <h2>Creators</h2>
+              <p>Tick the creators you already work with. The plan marks who it recommends and explains the rest.</p>
             </div>
+            <label className="creators-search">
+              <Search size={15} />
+              <span className="sr-only">Search creators</span>
+              <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search" />
+            </label>
           </div>
 
-          {activeCreator && (
-            <CreatorInspector
-              creator={activeCreator}
-              selected={currentRoster.includes(activeCreator.id)}
-              constraint={constraintFor(activeCreator.id)}
-              metricLabels={creatorMetricLabels}
-              onToggleCurrent={() => toggle(currentRoster, setCurrentRoster, activeCreator.id)}
-              onConstraintChange={(mode) => setConstraint(activeCreator.id, mode)}
-            />
-          )}
+          {(() => {
+            const planIds = result && !resultIsStale ? new Set(result.recommended.ids) : null;
+            const leftOut = new Map((result?.whyNot ?? []).map((row) => [row.creatorId, row]));
+            const statusOf = (id: string) => {
+              if (exclude.includes(id)) return 'excluded';
+              if (include.includes(id)) return 'required';
+              if (!planIds) return 'none';
+              return planIds.has(id) ? 'recommended' : 'left';
+            };
+            const counts = {
+              all: filteredCreators.length,
+              recommended: filteredCreators.filter((c) => statusOf(c.id) === 'recommended' || (planIds?.has(c.id) ?? false)).length,
+              roster: filteredCreators.filter((c) => currentRoster.includes(c.id)).length,
+              left: filteredCreators.filter((c) => statusOf(c.id) === 'left').length,
+            };
+            const rank = { recommended: 0, required: 0, left: 1, none: 1, excluded: 2 } as Record<string, number>;
+            const rows = filteredCreators
+              .filter((c) => planFilter === 'all'
+                || (planFilter === 'recommended' && (planIds?.has(c.id) ?? false))
+                || (planFilter === 'roster' && currentRoster.includes(c.id))
+                || (planFilter === 'left' && statusOf(c.id) === 'left'))
+              .slice()
+              .sort((a, b) => (rank[statusOf(a.id)] - rank[statusOf(b.id)]) || (b.estimatedViews - a.estimatedViews));
+            return (
+              <>
+                <div className="creators-tabs" role="tablist" aria-label="Filter creators">
+                  {([['all', 'All'], ['recommended', 'Recommended'], ['roster', 'Your roster'], ['left', 'Left out']] as const).map(([key, label]) => (
+                    <button key={key} role="tab" aria-selected={planFilter === key} className={planFilter === key ? 'active' : ''}
+                      disabled={(key === 'recommended' || key === 'left') && !planIds} onClick={() => setPlanFilter(key)}>
+                      {label}<span>{counts[key]}</span>
+                    </button>
+                  ))}
+                  <div className={`creators-spend ${selectedSpend > budget ? 'over-budget' : ''}`}>
+                    Your roster: <strong>{currentRoster.length}</strong> creators · {formatMoney(selectedSpend)}
+                  </div>
+                </div>
+                {!planIds && <p className="creators-hint">{result ? 'Inputs changed. Run the plan again to refresh recommendations.' : 'Run the plan to see which creators it recommends.'}</p>}
 
-          <div className="roster-table-wrap">
-            <table className="creator-table">
-              <caption className="sr-only">Creator roster controls</caption>
-              <colgroup>
-                <col className="current-col" />
-                <col className="creator-col" />
-                <col className="fit-col" />
-                <col className="evidence-col" />
-                <col className="views-col" />
-                <col className="price-col" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th scope="col">Current</th>
-                  <th scope="col">
-                    <button type="button" className="sort-button" onClick={() => updateSort('creator')} aria-label="Sort creators by name">
-                      Creator <ArrowUpDown size={13} />
-                    </button>
-                  </th>
-                  <th scope="col">
-                    <button type="button" className="sort-button" onClick={() => updateSort('fit')} aria-label="Sort creators by campaign fit">
-                      Fit <ArrowUpDown size={13} />
-                    </button>
-                  </th>
-                  <th scope="col">Evidence</th>
-                  <th scope="col">
-                    <button type="button" className="sort-button" onClick={() => updateSort('views')} aria-label={`Sort creators by ${creatorMetricLabels.views.toLowerCase()}`} title={creatorMetricLabels.views}>
-                      Views <ArrowUpDown size={13} />
-                    </button>
-                  </th>
-                  <th scope="col">
-                    <button type="button" className="sort-button" onClick={() => updateSort('cost')} aria-label={`Sort creators by ${creatorMetricLabels.price.toLowerCase()}`} title={creatorMetricLabels.price}>
-                      Quote <ArrowUpDown size={13} />
-                    </button>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredCreators.length === 0 ? (
-                  <tr>
-                    <td className="empty-row" colSpan={6}>No creators match the current filters.</td>
-                  </tr>
-                ) : (
-                  filteredCreators.map((creator) => {
-                    const selected = currentRoster.includes(creator.id);
-                    const active = activeCreator?.id === creator.id;
+                <div className="creators-list" role="table" aria-label="Creators">
+                  <div className="creators-row creators-row-head" role="row">
+                    <span role="columnheader">Your roster</span>
+                    <span role="columnheader">Creator</span>
+                    <span role="columnheader">Plan</span>
+                    <span role="columnheader" className="num">Median views</span>
+                    <span role="columnheader" className="num">Quote</span>
+                    <span role="columnheader" />
+                  </div>
+                  {rows.length === 0 && <p className="creators-empty">No creators match.</p>}
+                  {rows.map((creator) => {
+                    const status = statusOf(creator.id);
+                    const inRoster = currentRoster.includes(creator.id);
+                    const open = expandedId === creator.id;
+                    const why = leftOut.get(creator.id);
                     return (
-                      <tr className={`${selected ? 'selected' : ''} ${active ? 'active' : ''}`} key={creator.id}>
-                        <td data-label="Current">
-                          <label className="current-toggle compact">
-	                            <input
-                              type="checkbox"
-                              checked={selected}
-                              aria-label={`Toggle current roster selection for ${creator.name}`}
-                              onChange={() => toggle(currentRoster, setCurrentRoster, creator.id)}
+                      <div key={creator.id} className={`creators-item status-${status} ${open ? 'open' : ''}`}>
+                        <div className="creators-row" role="row">
+                          <span role="cell">
+                            <input type="checkbox" className="roster-check" checked={inRoster}
+                              aria-label={`${creator.name} is in your roster`} onChange={() => toggle(currentRoster, setCurrentRoster, creator.id)} />
+                          </span>
+                          <span role="cell" className="creator-cell">
+                            <span className="avatar" aria-hidden="true">{creator.name.replace(/^@/, '').slice(0, 1).toUpperCase()}</span>
+                            <span>
+                              <strong>{creator.name}</strong>
+                              <small>{creator.category}</small>
+                            </span>
+                          </span>
+                          <span role="cell">
+                            {status === 'recommended' && <span className="status-badge rec">Recommended</span>}
+                            {status === 'required' && <span className="status-badge rec">Required</span>}
+                            {status === 'excluded' && <span className="status-badge off">Excluded</span>}
+                            {status === 'left' && <span className="status-badge left">{why && Math.round(why.alreadyCoveredShare * 100) >= 1 ? `${Math.round(why.alreadyCoveredShare * 100)}% already reached` : 'Not picked'}</span>}
+                            {status === 'none' && <span className="status-badge none">—</span>}
+                          </span>
+                          <span role="cell" className="num">{formatCompact(Math.round(creator.estimatedViews))}</span>
+                          <span role="cell" className="num">
+                            <MoneyInput value={costs[creator.id] ?? creator.baseCost} onChange={(value) => setCosts({ ...costs, [creator.id]: value })}
+                              ariaLabel={`Quote for ${creator.name}`} compact />
+                          </span>
+                          <span role="cell" className="row-actions">
+                            <button type="button" className="btn-ghost details-btn" aria-expanded={open}
+                              onClick={() => { setExpandedId(open ? '' : creator.id); setActiveCreatorId(creator.id); }}>
+                              {open ? 'Hide' : 'Details'}
+                            </button>
+                          </span>
+                        </div>
+                        {open && (
+                          <div className="creators-detail">
+                            {why && <p className="detail-why">{why.overlapsWith.length > 0
+                              ? `${Math.round(why.alreadyCoveredShare * 100)}% of this audience is already reached through ${why.overlapsWith.map((o) => o.creatorName).join(', ')}. ${why.reason}`
+                              : why.reason}</p>}
+                            <CreatorInspector
+                              creator={creator}
+                              selected={inRoster}
+                              constraint={constraintFor(creator.id)}
+                              metricLabels={creatorMetricLabels}
+                              onToggleCurrent={() => toggle(currentRoster, setCurrentRoster, creator.id)}
+                              onConstraintChange={(mode) => setConstraint(creator.id, mode)}
                             />
-                            <span className="sr-only">Current roster</span>
-                          </label>
-                        </td>
-                        <td data-label="Creator">
-                          <div className="creator-meta">
-                            <strong>{creator.name}</strong>
-                            <span>{creator.vertical}</span>
                           </div>
-                        </td>
-	                        <td data-label="Fit">
-                          <div className="fit-cell">
-                            <span className={`fit-badge ${creator.eligibilityStatus}`}>{creator.eligibilityStatus}</span>
-                            <small>{creator.category}</small>
-                          </div>
-                        </td>
-                        <td data-label="Evidence">
-                          <button
-                            className={`evidence-button ${creator.evidenceState} ${active ? 'active' : ''}`}
-                            type="button"
-                            aria-pressed={active}
-                            aria-label={`Show evidence and constraints for ${creator.name}`}
-                            onClick={() => setActiveCreatorId(creator.id)}
-                          >
-                            <span>{evidenceStatusLabel(creator.evidenceState)}</span>
-                            <small>{formatNumber(creator.sampleSize)} {sampleLabel(creator)}</small>
-                          </button>
-                        </td>
-                        <td className="numeric-cell" data-label={creatorMetricLabels.views} title={creatorMetricLabels.views}>{formatNumber(creator.estimatedViews)}</td>
-                        <td className="numeric-cell" data-label={creatorMetricLabels.price} title={creatorMetricLabels.price}>
-                          <MoneyInput
-                            value={costs[creator.id] ?? creator.baseCost}
-                            onChange={(value) => setCosts({ ...costs, [creator.id]: value })}
-                            ariaLabel={`${creatorMetricLabels.price} for ${creator.name}`}
-                            compact
-                          />
-                        </td>
-                      </tr>
+                        )}
+                      </div>
                     );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                  })}
+                </div>
+              </>
+            );
+          })()}
         </div>
 
         {creators.some(c => c.source === 'observed-public') && <ExploreOverlap aiEnabled={aiStatus.enabled} />}
 
+        {result?.whyNot && <WhyNotPanel rows={result.whyNot} stale={resultIsStale} aiEnabled={aiStatus.enabled} onAsk={async (question) => {
+          if (!plannedInputs) return 'Run the plan first.';
+          try {
+            const response = await fetch('/api/explain', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ question, inputs: plannedInputs }) });
+            const payload = await response.json();
+            return response.ok ? payload.answer : (payload.error ?? 'The explanation request failed.');
+          } catch {
+            return 'The explanation request failed.';
+          }
+        }} />}
+
+        {result && (
+          <details className="more-details">
+            <summary>Full comparison details</summary>
         {result?.rosterDiagnostics && (
           <RosterOverlapPanel result={result} creators={creatorById} stale={resultIsStale} />
         )}
@@ -895,18 +874,13 @@ function App() {
           </section>
         )}
 
-        {result?.whyNot && <WhyNotPanel rows={result.whyNot} stale={resultIsStale} aiEnabled={aiStatus.enabled} onAsk={async (question) => {
-          if (!plannedInputs) return 'Run the plan first.';
-          try {
-            const response = await fetch('/api/explain', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ question, inputs: plannedInputs }) });
-            const payload = await response.json();
-            return response.ok ? payload.answer : (payload.error ?? 'The explanation request failed.');
-          } catch {
-            return 'The explanation request failed.';
-          }
-        }} />}
+          </details>
+        )}
       </section>
+      <footer className="page-note">
+        How to read this: overlap comes from public commenters on recent videos, used as a proxy for shared audience.
+        Counts are commenter accounts, not unique viewers, and scores compare rosters rather than forecast results.
+      </footer>
     </main>
   );
 }

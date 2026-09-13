@@ -39,29 +39,31 @@ export function SponsorConflicts({ creators, exclude, disabled, onExclude }: {
   if (!creators.some((creator) => creator.sponsorMentions)) return null;
 
   return (
-    <section className="panel" aria-label="Sponsor conflicts">
-      <div className="panel-heading compact">
-        <h2>Sponsor conflicts</h2>
-        <p>
-          {withEvidence.length} of {creators.length} creators mention a sponsor in recent public video descriptions.
-          Pattern matches are evidence for review, not a verdict.
-        </p>
+    <section className="card tool-card" aria-label="Sponsor conflicts">
+      <div className="tool-head">
+        <h2>Avoid competitor sponsors</h2>
+        <span className="pill">{withEvidence.length} of {creators.length} mention a sponsor</span>
       </div>
-      <div className="save-card">
-        <label>
-          <span>Brands or categories to avoid (comma-separated)</span>
-          <input aria-label="Brands to avoid" maxLength={500} value={avoidText}
-            onChange={(event) => setAvoidText(event.target.value)} placeholder="Competing espresso machine brands" />
-        </label>
-        <button className="primary" disabled={disabled || pending.length === 0} onClick={() => onExclude(pending.map((match) => match.id))}>
+      <p className="tool-help">Type brands to avoid. We check recent video descriptions and drop creators who mention them.</p>
+      <input aria-label="Brands to avoid" maxLength={500} value={avoidText}
+        onChange={(event) => setAvoidText(event.target.value)} placeholder="Brand names, separated by commas" />
+      <div className="tool-actions">
+        <button className="btn-primary" disabled={disabled || pending.length === 0} onClick={() => onExclude(pending.map((match) => match.id))}>
           <AlertTriangle size={15} />
-          Exclude {pending.length || ''} matching {pending.length === 1 ? 'creator' : 'creators'}
+          {pending.length ? `Exclude ${pending.length} ${pending.length === 1 ? 'creator' : 'creators'}` : 'Exclude matches'}
         </button>
-        <p role="status">
-          {avoidText.trim() && matches.length === 0 ? 'No creator mentions those brands in the collected descriptions.' : ''}
-          {matches.map((match) => `${match.name}: ${match.brands.join(', ')}${exclude.includes(match.id) ? ' (excluded)' : ''}`).join(' · ')}
-        </p>
       </div>
+      <div className="chips" role="status">
+        {avoidText.trim() && matches.length === 0 && <span className="tool-reply">No creator mentions those brands.</span>}
+        {matches.map((match) => (
+          <span className={`chip ${exclude.includes(match.id) ? 'chip-off' : ''}`} key={match.id}>
+            {match.name} <b>{match.brands.join(', ')}</b>{exclude.includes(match.id) ? ' · excluded' : ''}
+          </span>
+        ))}
+      </div>
+      {withEvidence.length > 0 && !avoidText.trim() && (
+        <p className="tool-foot">Found in descriptions: {withEvidence.map((c) => `${c.name} (${c.sponsorMentions!.brands.map((b) => b.brand).join(', ')})`).join(' · ')}. Matches are text patterns, so check before excluding.</p>
+      )}
     </section>
   );
 }
