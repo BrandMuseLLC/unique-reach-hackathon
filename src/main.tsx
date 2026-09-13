@@ -6,6 +6,7 @@ import { ExploreOverlap } from './ExploreOverlap';
 import { SponsorConflicts, type SponsorMentions } from './SponsorConflicts';
 import { WhyNotPanel, type WhyNot } from './WhyNotPanel';
 import { Glance } from './Glance';
+import { Studio } from './Studio';
 import whiteWordmark from '../brandmuse/assets/brand-muse-wordmark-white.jpg';
 
 type Creator = {
@@ -1259,4 +1260,6 @@ function MoneyInput({ value, onChange, ariaLabel, compact = false }: { value: nu
   );
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+// The Studio layout replaced the original single-page App; App remains for reference during consolidation.
+void App;
+createRoot(document.getElementById('root')!).render(<Studio />);

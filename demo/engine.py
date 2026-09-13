@@ -109,7 +109,7 @@ class Planner:
     def context(self, request):
         if not isinstance(request, dict):
             raise PlanError("Request must be a JSON object.")
-        allowed = {"budget", "must_include", "exclude", "max_per_group", "costs", "objective", "relevance", "brand_description"}
+        allowed = {"budget", "must_include", "exclude", "max_per_group", "costs", "objective", "relevance", "brand_description", "creator_count"}
         unknown = set(request) - allowed
         if unknown:
             raise PlanError("Unsupported planner fields: " + ", ".join(sorted(unknown)))
@@ -148,13 +148,18 @@ class Planner:
             if group not in groups or isinstance(cap, bool) or not isinstance(cap, int) or cap < 0:
                 raise PlanError("Group caps must be nonnegative integers for known communities.")
         required = lists["must_include"]
+        count = request.get("creator_count", 0)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0 or count > 100:
+            raise PlanError("Creator count must be a whole number from 0 (no target) to 100.")
+        if count and len(required) > count:
+            raise PlanError("You required %d creators but asked for %d in total." % (len(required), count))
         if sum(costs[i] for i in required) > budget + 1e-8:
             raise PlanError("Required creators cost more than the budget. Raise it or release a requirement.")
         for group, cap in caps.items():
             if sum(self.by_id[i]["community"] == group for i in required) > cap:
                 raise PlanError("Required creators exceed the %s community cap." % group)
         return {"budget": budget, **lists, "costs": costs, "max_per_group": dict(caps),
-                "objective": objective, "relevance": dict(relevance), "brand_description": brand}
+                "objective": objective, "relevance": dict(relevance), "brand_description": brand, "creator_count": count}
 
     def coverage(self, ids, ctx=None):
         best = {}
@@ -186,7 +191,8 @@ class Planner:
         selected = list(ctx["must_include"])
         best = self.coverage(selected, ctx)
         spend = sum(ctx["costs"][i] for i in selected)
-        while True:
+        target = ctx.get("creator_count", 0)
+        while not target or len(selected) < target:
             candidates = []
             for c in self.creators:
                 cid, group = c["id"], c["community"]
@@ -195,8 +201,8 @@ class Planner:
                 if sum(self.by_id[i]["community"] == group for i in selected) >= ctx["max_per_group"].get(group, math.inf):
                     continue
                 gain = self.gain(c, best, ctx)
-                if gain <= 1e-8 and mode in ("ratio", "gain"):
-                    continue
+                if gain <= 1e-8 and mode in ("ratio", "gain") and not target:
+                    continue  # with a creator-count target, zero-gain picks still fill the requested slots
                 score = {"ratio": (gain / ctx["costs"][cid] if ctx["costs"][cid] else (math.inf if gain > 0 else 0)), "gain": gain,
                          "subscribers": c["subscribers"], "views": c["views"]}[mode]
                 candidates.append((score, cid))
@@ -213,7 +219,10 @@ class Planner:
     def optimize(self, request):
         ctx = self.context(request)
         runs = {mode: self.run(ctx, mode) for mode in ("ratio", "gain", "subscribers", "views")}
-        winner = max(runs, key=lambda k: (runs[k]["reach_est"], -runs[k]["spend"]))
+        target = ctx.get("creator_count", 0)
+        # With a creator-count target, prefer heuristics that actually reach it; fall back to the best available.
+        pool = [k for k in runs if not target or len(runs[k]["selected"]) >= target] or list(runs)
+        winner = max(pool, key=lambda k: (min(len(runs[k]["selected"]), target) if target else 0, runs[k]["reach_est"], -runs[k]["spend"]))
         result = dict(runs[winner])
         best = self.coverage(result["selected"], ctx)
         rejected = []

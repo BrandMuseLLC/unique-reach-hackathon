@@ -4,127 +4,134 @@ type Node = { id: string; name: string; sampledCommenters: number };
 type Pair = { a: string; b: string; sharedCommenters: number; jaccard: number };
 type Cluster = { id: string; members: string[]; label: string; labelSource: 'rule' | 'model'; summary?: string;
   topics: Record<string, number>; anchorCreators: string[]; medianInternalJaccard: number | null };
-type Graph = { datasetVersion: string; nodes: Node[]; pairs: Pair[]; metric: string; clusters?: Cluster[]; clusterMethod?: string };
-const number = (value: number) => value.toLocaleString('en-US');
-const percent = (value: number) => `${(value * 100).toFixed(2)}%`;
+type Graph = { datasetVersion: string; nodes: Node[]; pairs: Pair[]; metric: string; clusters?: Cluster[] };
+
+const whole = (value: number) => Math.round(value).toLocaleString('en-US');
 
 export function ExploreOverlap({ aiEnabled = false }: { aiEnabled?: boolean }) {
-  const [open, setOpen] = useState(false);
-  return <section className="explore-panel" aria-labelledby="explore-heading">
-    <div className="panel-heading">
-      <div><h2 id="explore-heading">Explore overlap</h2><p>Explore observed connections between creators in the historical comment sample.</p></div>
-      <button aria-expanded={open} aria-controls="explore-content" onClick={() => setOpen(!open)}>{open ? 'Close explorer' : 'Open explorer'}</button>
-    </div>
-    {open && <div id="explore-content"><OverlapNetwork aiEnabled={aiEnabled} /></div>}
-  </section>;
-}
-
-function OverlapNetwork({ aiEnabled }: { aiEnabled: boolean }) {
   const [data, setData] = useState<Graph | null>(null);
-  const [labelStatus, setLabelStatus] = useState('');
+  const [error, setError] = useState('');
+  const [focus, setFocus] = useState('');
   const [labeling, setLabeling] = useState(false);
-  async function nameClusters() {
-    setLabeling(true); setLabelStatus('');
+  const [labelStatus, setLabelStatus] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/overlap', { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Audience data could not be loaded.');
+        const graph: Graph = await response.json();
+        setData(graph);
+        const biggest = [...graph.nodes].sort((a, b) => b.sampledCommenters - a.sampledCommenters)[0];
+        setFocus(biggest?.id ?? '');
+      })
+      .catch((e) => { if (!controller.signal.aborted) setError(e.message); });
+    return () => controller.abort();
+  }, []);
+
+  const nodes = useMemo(() => new Map(data?.nodes.map((n) => [n.id, n]) ?? []), [data]);
+  const center = nodes.get(focus);
+  // Share of the focus creator's commenters who also comment on the other creator: easier to read than Jaccard.
+  const neighbours = useMemo(() => {
+    if (!data || !center) return [];
+    return data.pairs
+      .filter((p) => (p.a === focus || p.b === focus) && p.sharedCommenters > 0)
+      .map((p) => {
+        const other = nodes.get(p.a === focus ? p.b : p.a)!;
+        return { other, shared: p.sharedCommenters, share: center.sampledCommenters ? p.sharedCommenters / center.sampledCommenters : 0 };
+      })
+      .sort((x, y) => y.share - x.share)
+      .slice(0, 8);
+  }, [data, center, focus, nodes]);
+  const maxShare = Math.max(...neighbours.map((n) => n.share), 0.0001);
+  const groups = (data?.clusters ?? []).filter((c) => c.members.length > 1);
+
+  async function nameGroups() {
+    setLabeling(true);
+    setLabelStatus('');
     try {
       const response = await fetch('/api/overlap/labels', { method: 'POST' });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? 'Cluster naming failed; rule-based labels are unchanged.');
-      setData(current => current ? { ...current, clusters: payload.clusters } : current);
-      setLabelStatus('Named from channel names and public video titles; not audience demographics.');
+      if (!response.ok) throw new Error(payload.error ?? 'Naming failed; the simple labels are unchanged.');
+      setData((current) => (current ? { ...current, clusters: payload.clusters } : current));
+      setLabelStatus('Named from channel names and video titles, not from viewer data.');
     } catch (e) {
-      setLabelStatus(e instanceof Error ? e.message : 'Cluster naming failed.');
-    } finally { setLabeling(false); }
+      setLabelStatus(e instanceof Error ? e.message : 'Naming failed.');
+    } finally {
+      setLabeling(false);
+    }
   }
-  const [error, setError] = useState('');
-  const [focus, setFocus] = useState('');
-  const [partner, setPartner] = useState('');
-  const [minimum, setMinimum] = useState(0);
-  const [sort, setSort] = useState('jaccard');
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch('/api/overlap', { signal: controller.signal }).then(async response => {
-      if (!response.ok) throw new Error('Overlap data could not be loaded. Check your session and try reopening the explorer.');
-      const graph: Graph = await response.json();
-      setData(graph); setFocus(graph.nodes[0]?.id ?? '');
-    }).catch(e => { if (!controller.signal.aborted) setError(e.message); });
-    return () => controller.abort();
-  }, []);
-  const nodes = useMemo(() => new Map(data?.nodes.map(n => [n.id, n]) ?? []), [data]);
-  const pairs = useMemo(() => (data?.pairs ?? []).filter(p => p.a === focus || p.b === focus)
-    .map(p => ({ ...p, other: (p.a === focus ? p.b : p.a) }))
-    .sort((a, b) => sort === 'count' ? b.sharedCommenters - a.sharedCommenters || b.jaccard - a.jaccard : b.jaccard - a.jaccard || b.sharedCommenters - a.sharedCommenters), [data, focus, sort]);
-  const filtered = pairs.filter(p => p.sharedCommenters >= minimum);
-  const visible = filtered.filter(p => p.sharedCommenters > 0).slice(0, 8);
-  const active = pairs.find(p => p.other === partner) ?? visible[0] ?? pairs[0];
-  const center = nodes.get(focus);
-  const other = nodes.get(active?.other ?? '');
-  const chooseFocus = (id: string) => { setFocus(id); setPartner(''); };
-  if (error) return <p role="alert">{error}</p>;
-  if (!data || !center) return <p role="status">Loading observed pair summaries…</p>;
-  return <>
-    <p className="explore-note">Shared commenters are commenter IDs appearing in both sampled channels, not all viewers. Node positions are arranged for readability; proximity is not validated audience similarity. No demographics are inferred.</p>
-    {data.clusters && data.clusters.some(c => c.members.length > 1) && <section className="explore-clusters" aria-labelledby="clusters-heading">
-      <div className="explore-clusters-heading">
-        <h3 id="clusters-heading">Audience clusters</h3>
-        <button onClick={() => void nameClusters()} disabled={!aiEnabled || labeling} title={aiEnabled ? 'Name clusters with the live model' : 'Live AI is not configured'}>
-          {labeling ? 'Naming clusters…' : 'Name clusters with AI'}
-        </button>
+
+  return (
+    <section className="aud panel-lite" aria-labelledby="aud-heading">
+      <div className="section-head">
+        <div>
+          <h2 id="aud-heading">Audience map</h2>
+          <p>Which creators share the same fans? We count people who commented on both creators&rsquo; recent videos.</p>
+        </div>
       </div>
-      <p className="explore-note">{data.clusterMethod}</p>
-      <ul>
-        {data.clusters.filter(c => c.members.length > 1).map(c => <li key={c.id}>
-          <strong>{c.label}</strong> <span className="explore-note">({c.members.length} channels{c.medianInternalJaccard !== null ? `, median ${percent(c.medianInternalJaccard)} Jaccard inside` : ''}{c.labelSource === 'model' ? ', AI-named' : ''})</span>
-          {c.summary && <p>{c.summary}</p>}
-          <div className="explore-cluster-members">{c.members.map(id => <button key={id} aria-pressed={id === focus} onClick={() => chooseFocus(id)}>{nodes.get(id)?.name ?? id}</button>)}</div>
-        </li>)}
-      </ul>
-      {labelStatus && <p role="status">{labelStatus}</p>}
-    </section>}
-    <div className="explore-controls">
-      <label>Focus creator<select value={focus} onChange={e => chooseFocus(e.target.value)}>{data.nodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></label>
-      <label>Minimum shared commenters<input type="number" min="0" step="1" value={minimum} onChange={e => setMinimum(Math.max(0, Math.floor(Number(e.target.value) || 0)))} /></label>
-      <label>Rank connections by<select value={sort} onChange={e => setSort(e.target.value)}><option value="jaccard">Jaccard percentage</option><option value="count">Shared-commenter count</option></select></label>
-    </div>
-    <p className="explore-note">{data.nodes.length} sampled channels. Network shows up to eight strongest nonzero connections for the selected creator; the table includes all {filtered.length} matching pairs. Line width represents Jaccard percentage; nodes have equal size. {data.metric}</p>
-    <div className="explore-layout">
-      <div className="explore-canvas" role="region" aria-label="Creator connection network" tabIndex={0}>
-        <svg viewBox="0 0 920 580" aria-label={`Observed connections for ${center.name}`} role="group">
-          {visible.map((p, i) => {
-            const angle = -Math.PI / 2 + i * Math.PI * 2 / visible.length;
-            const x = 460 + Math.cos(angle) * 310, y = 290 + Math.sin(angle) * 205;
-            return <line key={p.other} x1="460" y1="290" x2={x} y2={y} stroke={p.other === active?.other ? '#a78bfa' : '#3b3552'} strokeWidth={1 + 9 * p.jaccard} />;
-          })}
-          <circle cx="460" cy="290" r="24" fill="#8b5cf6" />
-          <text x="460" y="335" textAnchor="middle" className="explore-node-label">{center.name}</text>
-          {visible.map((p, i) => {
-            const angle = -Math.PI / 2 + i * Math.PI * 2 / visible.length;
-            const x = 460 + Math.cos(angle) * 310, y = 290 + Math.sin(angle) * 205;
-            const selected = p.other === active?.other;
-            return <g key={p.other} className="explore-node" role="button" tabIndex={0} aria-pressed={selected}
-              aria-label={`Inspect ${center.name} and ${nodes.get(p.other)?.name}: ${number(p.sharedCommenters)} shared commenters, ${percent(p.jaccard)} Jaccard`}
-              onClick={() => setPartner(p.other)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPartner(p.other); } }}>
-              <circle cx={x} cy={y} r="24" fill={selected ? '#a78bfa' : '#1a1a24'} stroke="#a78bfa" strokeWidth={selected ? 3 : 1} />
-              <text x={x} y={y + 43} textAnchor="middle" className="explore-node-label">{nodes.get(p.other)?.name}</text>
-              <text x={x} y={y + 62} textAnchor="middle" className="explore-edge-label">{number(p.sharedCommenters)} shared · {percent(p.jaccard)}</text>
-            </g>;
-          })}
-          {!visible.length && <text x="460" y="385" textAnchor="middle">No nonzero connections match this filter.</text>}
-        </svg>
-      </div>
-      <aside className="explore-inspector" aria-live="polite" aria-atomic="true">
-        <h3>Selected pair</h3>
-        {active && other ? <><p><strong>{center.name}</strong><br />↔ {other.name}</p>
-          <dl><dt>Shared sampled commenters</dt><dd>{number(active.sharedCommenters)}</dd><dt>Commenter Jaccard</dt><dd>{percent(active.jaccard)}</dd><dt>Sampled commenters in either channel</dt><dd>{number(center.sampledCommenters + other.sampledCommenters - active.sharedCommenters)}</dd></dl>
-          <p>{center.name}: {number(center.sampledCommenters)} sampled commenters.<br />{other.name}: {number(other.sampledCommenters)} sampled commenters.</p>
-          {active.sharedCommenters < minimum && <p>This selected pair is below the current filter.</p>}
-          <button aria-label={`Explore ${other.name}`} onClick={() => chooseFocus(other.id)}>Make focus creator</button>
-          <p className="explore-note">Zero observed overlap does not prove separate viewer audiences. Counts are historical sample evidence, not campaign reach.</p></> : <p>No pair available.</p>}
-      </aside>
-    </div>
-    <div className="explore-table-wrap"><table className="explore-table"><caption>Connections for {center.name}. Select a pair to inspect it; filters never change your campaign.</caption>
-      <thead><tr><th scope="col">Creator pair</th><th scope="col">Shared commenters</th><th scope="col">Jaccard</th></tr></thead>
-      <tbody>{filtered.map(p => <tr key={p.other} className={p.other === active?.other ? 'explore-selected' : ''}><td><button aria-pressed={p.other === active?.other} onClick={() => setPartner(p.other)}>Inspect {nodes.get(p.other)?.name}</button></td><td>{number(p.sharedCommenters)}</td><td>{percent(p.jaccard)}</td></tr>)}
-      {!filtered.length && <tr><td colSpan={3}>No connections match. Lower the minimum shared-commenter count.</td></tr>}</tbody>
-    </table></div>
-  </>;
+
+      {error && <p className="alert">{error}</p>}
+      {!data && !error && <p className="placeholder small">Loading audience data…</p>}
+
+      {data && center && (
+        <div className="aud-grid">
+          <div className="aud-card">
+            <label className="aud-pick">
+              <span>Pick a creator</span>
+              <select value={focus} onChange={(e) => setFocus(e.target.value)}>
+                {[...data.nodes].sort((a, b) => a.name.localeCompare(b.name)).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+              </select>
+            </label>
+            <p className="aud-lead">
+              Of <strong>{whole(center.sampledCommenters)}</strong> people we saw commenting on <strong>{center.name}</strong>, this share also comment on:
+            </p>
+            {neighbours.length === 0 ? (
+              <p className="placeholder small">No shared commenters with the other creators in this search. Their audiences look separate in our sample.</p>
+            ) : (
+              <ul className="aud-bars" key={focus}>
+                {neighbours.map((n, i) => (
+                  <li key={n.other.id}>
+                    <button className="aud-name" onClick={() => setFocus(n.other.id)} title={`Show ${n.other.name}`}>{n.other.name}</button>
+                    <div className="aud-track"><i className="grow-x" style={{ width: `${Math.max((n.share / maxShare) * 100, 3)}%`, animationDelay: `${i * 60}ms` }} /></div>
+                    <span className="aud-value"><strong>{(n.share * 100).toFixed(n.share < 0.1 ? 1 : 0)}%</strong> <small>{whole(n.shared)} people</small></span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="aud-foot">Higher % means more of the same fans, so pairing those two creators reaches fewer new people. Based on a sample of public commenters, not all viewers.</p>
+          </div>
+
+          <div className="aud-card">
+            <div className="aud-groups-head">
+              <div><h3>Creator groups</h3><p>Creators whose fans overlap the most, grouped together.</p></div>
+              {groups.length > 0 && (
+                <button className="btn-secondary" onClick={() => void nameGroups()} disabled={!aiEnabled || labeling}>
+                  {labeling ? 'Naming…' : 'Name groups with AI'}
+                </button>
+              )}
+            </div>
+            {groups.length === 0 ? (
+              <p className="placeholder small">No clear groups: fans barely overlap across these creators.</p>
+            ) : (
+              <div className="aud-groups">
+                {groups.map((g) => (
+                  <div className="aud-group" key={g.id}>
+                    <strong>{g.labelSource === 'model' ? g.label : g.label.replace(/ cluster$/, '')}</strong>
+                    {g.summary && <p>{g.summary}</p>}
+                    <div className="aud-members">
+                      {g.members.map((id) => (
+                        <button key={id} className={id === focus ? 'on' : ''} onClick={() => setFocus(id)}>{nodes.get(id)?.name ?? id}</button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {labelStatus && <p className="aud-foot" role="status">{labelStatus}</p>}
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }

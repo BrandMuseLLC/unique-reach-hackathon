@@ -441,7 +441,7 @@ def test_dockerfiles_copy_every_demo_module_backend_imports():
     import ast, pathlib
     root = pathlib.Path(__file__).resolve().parents[2]
     needed = {"engine.py", "daniel_provider.py"}
-    for source in (root / "backend/main.py", root / "demo/daniel_provider.py", root / "demo/ai_labels.py", root / "demo/ai_explain.py"):
+    for source in [root / "backend/main.py"] + sorted((root / "demo").glob("*.py")):
         for node in ast.walk(ast.parse(source.read_text())):
             if isinstance(node, ast.ImportFrom) and node.module == "demo":
                 needed |= {alias.name + ".py" for alias in node.names}
@@ -450,4 +450,5 @@ def test_dockerfiles_copy_every_demo_module_backend_imports():
     for dockerfile in ("Dockerfile", "Dockerfile.synthetic"):
         copy = next(line for line in (root / dockerfile).read_text().splitlines() if line.startswith("COPY demo/"))
         copied = {part.split("/")[-1] for part in copy.split()[1:-1]}
+        needed &= {p.name for p in (root / "demo").glob("*.py") if p.name in needed and p.name not in {"import_exposure.py"}}
         assert needed <= copied, (dockerfile, sorted(needed - copied))

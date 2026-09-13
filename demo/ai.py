@@ -40,9 +40,18 @@ _last_call = None
 _calls = 0
 
 
-def reserve_call():
-    """Shared rate and session-budget guard for every live model feature."""
+def reserve_call(wait=False):
+    """Shared rate and session-budget guard for every live model feature.
+
+    Interactive requests fail fast; background jobs pass wait=True to take the next free slot.
+    """
     global _last_call, _calls
+    deadline = time.monotonic() + 10
+    while wait:
+        with _lock:
+            if _last_call is None or time.monotonic() - _last_call >= 2 or time.monotonic() > deadline:
+                break
+        time.sleep(0.2)
     with _lock:
         if _last_call is not None and time.monotonic() - _last_call < 2:
             raise PlanError("Wait two seconds between live model requests.")

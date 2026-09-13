@@ -14,6 +14,7 @@ import json
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -74,6 +75,7 @@ class Client:
     sleep: Callable[[float], None] = time.sleep
     units: dict[int, int] = field(default_factory=dict)
     key_index: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def __post_init__(self):
         self.keys = [k.strip() for k in self.keys if k.strip()]
@@ -83,20 +85,26 @@ class Client:
     def get(self, resource: str, **params) -> dict:
         attempts = 0
         while True:
-            if self.key_index >= len(self.keys):
+            with self._lock:
+                index = self.key_index
+            if index >= len(self.keys):
                 raise QuotaExhausted("All API keys hit their quota; resume after the Pacific-midnight reset.")
-            query = urlencode({**params, "key": self.keys[self.key_index]})
+            query = urlencode({**params, "key": self.keys[index]})
             try:
                 status, body = self.transport(API + resource + "?" + query)
             except (URLError, TimeoutError, OSError):
                 status, body = 599, {}
-            self.units[self.key_index] = self.units.get(self.key_index, 0) + 1
+            with self._lock:
+                self.units[index] = self.units.get(index, 0) + 1
             if status == 200:
                 return body
             errors = (body.get("error") or {}).get("errors") or [{}]
             reason = errors[0].get("reason", "")
             if status == 403 and reason in QUOTA_REASONS:
-                self.key_index += 1
+                with self._lock:
+                    # Concurrent requests may all fail on the same key; only the first one advances past it.
+                    if self.key_index == index:
+                        self.key_index += 1
                 continue
             if status >= 500 and attempts < 3:
                 attempts += 1

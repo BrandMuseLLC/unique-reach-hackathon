@@ -23,7 +23,7 @@ function useCountUp(target: number, duration = 900) {
   const [value, setValue] = useState(0);
   const from = useRef(0);
   useEffect(() => {
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { setValue(target); return; }
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || document.visibilityState === 'hidden') { setValue(target); from.current = target; return; }
     const start = performance.now(), origin = from.current;
     let frame = 0;
     const tick = (now: number) => {
@@ -137,15 +137,15 @@ function MarginalPicks({ steps }: { steps: Step[] }) {
   );
 }
 
-function AlreadyCovered({ rows }: { rows: LeftOut[] }) {
+export function AlreadyCovered({ rows }: { rows: LeftOut[] }) {
   const { show, hide, node } = useTip();
   const top = rows.slice(0, 7);
   if (!top.length) return null;
   const left = 120, width = 250, rowH = 26;
   return (
     <div className="chart-card rise">
-      <h3>Why they were left out</h3>
-      <p>How much of each skipped creator&rsquo;s audience the plan already reaches.</p>
+      <h3>How much of each skipped creator is already reached</h3>
+      <p>Longer bar = more of that creator&rsquo;s commenters already come through the recommended roster.</p>
       <svg viewBox={`0 0 ${left + width + 50} ${top.length * rowH + 4}`} role="img" aria-label="Already-covered share for creators left out of the plan">
         {top.map((r, i) => {
           const y = i * rowH + 4;
@@ -167,32 +167,69 @@ function AlreadyCovered({ rows }: { rows: LeftOut[] }) {
   );
 }
 
+const EMPTY_DIAG: RosterDiag = { ids: [], spend: 0, coverage: 0, standalone: 0, shared: 0, sharedRate: 0 };
+
 export function Glance({ result, creatorCount }: { result: GlanceInput; creatorCount: number }) {
   const diag = result.rosterDiagnostics?.rosters;
-  if (!diag) return null;
-  const rec = diag.recommended, cur = diag.current;
+  const rec = diag?.recommended ?? EMPTY_DIAG, cur = diag?.current ?? EMPTY_DIAG;
   const spend = result.budget - result.remainingBudget;
   const reached = useCountUp(rec.coverage);
   const overlap = useCountUp(rec.sharedRate * 1000) / 1000;
   const spent = useCountUp(spend);
   const count = useCountUp(rec.ids.length, 600);
+  const mine = { reached: useCountUp(cur.coverage), overlap: useCountUp(cur.sharedRate * 1000) / 1000, spent: useCountUp(cur.spend), count: useCountUp(cur.ids.length, 600) };
+  if (!diag) return null;
+  const scale = Math.max(rec.sharedRate, cur.sharedRate, 0.001) * 1.15;
+  const points = (value: number) => (value * 100).toFixed(1);
+  const sentence = cur.ids.length === 0
+    ? `The recommended roster repeats ${points(rec.sharedRate)}% of its commenters. Tick creators below to compare your own roster.`
+    : rec.sharedRate < cur.sharedRate - 0.0005
+      ? `The recommended roster cuts repeated commenters from ${points(cur.sharedRate)}% to ${points(rec.sharedRate)}%, so less of the budget reaches the same people twice.`
+      : rec.sharedRate > cur.sharedRate + 0.0005
+        ? `Your roster overlaps less (${points(cur.sharedRate)}% vs ${points(rec.sharedRate)}%)${rec.coverage > cur.coverage ? ', but the recommended roster reaches more commenters overall' : ''}.`
+        : `Your roster and the recommended roster overlap about the same (${points(rec.sharedRate)}%).`;
   return (
     <section className="glance" aria-label="Plan at a glance">
       <div className="glance-head">
         <h2>Plan at a glance</h2>
-        <p>Recommended roster compared with yours</p>
+        <p>Tick creators in the list below to build your roster. Both columns update live.</p>
       </div>
-      <div className="kpis">
-        <div className="kpi rise"><span>Commenters reached</span><strong>{compact(reached)}</strong><small>each account counted once</small></div>
-        <div className="kpi rise"><span>Audience overlap</span><strong>{pct(overlap)}</strong><small>your roster: {pct(cur.sharedRate)} · lower is better</small></div>
-        <div className="kpi rise"><span>Spend</span><strong>{money(spent)}</strong><small>of {money(result.budget)} budget</small></div>
-        <div className="kpi rise"><span>Creators</span><strong>{Math.round(count)}</strong><small>chosen from {creatorCount} channels</small></div>
+      <div className="hero-metric rise">
+        <div className="hero-metric-copy">
+          <span className="hero-label">Audience overlap <em>lower is better</em></span>
+          <div className="hero-values">
+            <div className="hv plan"><em>Recommended</em><strong>{pct(overlap)}</strong></div>
+            <div className="hv mine"><em>Your roster</em><strong>{pct(mine.overlap)}</strong></div>
+          </div>
+          <p>{sentence}</p>
+        </div>
+        <div className="hero-bars" aria-hidden="true">
+          <div className="hb"><em>Recommended</em><div className="hb-track"><i className="grow-x plan" style={{ width: `${(rec.sharedRate / scale) * 100}%` }} /></div></div>
+          <div className="hb"><em>Your roster</em><div className="hb-track"><i className="grow-x mine" style={{ width: `${(cur.sharedRate / scale) * 100}%`, animationDelay: '120ms' }} /></div></div>
+          <small>Share of commenters who also comment on another creator in the same roster</small>
+        </div>
       </div>
-      <div className="charts">
+      <div className="support">
+        <Support label="Commenters reached" mine={compact(mine.reached)} plan={compact(reached)} better={rec.coverage > cur.coverage ? 'plan' : rec.coverage < cur.coverage ? 'mine' : 'tie'} />
+        <Support label="Spend" mine={money(mine.spent)} plan={money(spent)} note={`of ${money(result.budget)}`} />
+        <Support label="Creators" mine={String(Math.round(mine.count))} plan={String(Math.round(count))} note={`from ${creatorCount}`} />
+      </div>
+      <div className="charts charts-two">
         <RosterReach rosters={diag} />
         <MarginalPicks steps={result.steps} />
-        <AlreadyCovered rows={result.whyNot ?? []} />
       </div>
     </section>
+  );
+}
+
+function Support({ label, mine, plan, note, better = 'none' }: { label: string; mine: string; plan: string; note?: string; better?: 'mine' | 'plan' | 'tie' | 'none' }) {
+  return (
+    <div className="support-item rise">
+      <span>{label}{note ? <small> {note}</small> : null}</span>
+      <div>
+        <b className={better === 'plan' ? 'win' : ''}><i className="dot plan" />{plan}</b>
+        <b className={better === 'mine' ? 'win' : ''}><i className="dot mine" />{mine}</b>
+      </div>
+    </div>
   );
 }

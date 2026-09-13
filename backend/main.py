@@ -3,12 +3,13 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 
 from demo.daniel_provider import RealDataProvider
 from demo.engine import PlanError
-from demo import ai, ai_explain, ai_labels
+from demo import ai, ai_explain, ai_labels, assistant, discovery
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +24,27 @@ from .snapshots import create_snapshot_writer
 
 settings = auth_settings()
 real_provider = RealDataProvider.from_env(os.environ) if os.environ.get("MUSE_DATASET") == "observed" else None
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+
+def dataset_files() -> dict[str, Path]:
+    """Observed aggregates available locally: the startup dataset, known demo files and saved creator searches."""
+    files: dict[str, Path] = {}
+    if os.environ.get("MUSE_OBSERVED_DATA"):
+        path = Path(os.environ["MUSE_OBSERVED_DATA"]).resolve()
+        files[path.stem] = path
+    for name in ("home-coffee-aggregate.json", "exposure-aggregate.json"):
+        if (DATA_DIR / name).exists():
+            files.setdefault(Path(name).stem, (DATA_DIR / name).resolve())
+    analyses = DATA_DIR / "analyses"
+    if analyses.exists():
+        for path in sorted(analyses.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not path.name.endswith(".report.json"):
+                files.setdefault(path.stem, path.resolve())
+    return files
+
+
+active_dataset_id = Path(os.environ["MUSE_OBSERVED_DATA"]).stem if os.environ.get("MUSE_OBSERVED_DATA") and real_provider is not None else None
 CREATOR_METRIC_LABELS = {
     "views": "Expected video views",
     "price": "Sponsorship fee (USD)",
@@ -62,6 +84,7 @@ class PlanningContext(BaseModel):
     brandDescription: str = Field(default="", max_length=2000)
     relevance: dict[str, float] = Field(default_factory=dict, max_length=30)
     maxPerGroup: dict[str, int] = Field(default_factory=dict, max_length=30)
+    creatorCount: int = Field(default=0, ge=0, le=100)
 
 
 class PlanRequest(BaseModel):
@@ -246,6 +269,119 @@ def explain_plan(request: ExplainRequest, _: AuthenticatedUser = Depends(user_de
         return ai_explain.explain(plan, request.question)
     except (PlanningError, PlanError) as exc:
         return JSONResponse(status_code=400, content={'error': str(exc)})
+
+
+class ActivateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: str = Field(min_length=1, max_length=120)
+
+
+class DiscoverRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    prompt: str = Field(min_length=3, max_length=300)
+
+
+class AssistantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    message: str = Field(min_length=1, max_length=1000)
+    inputs: PlanRequest
+    history: list[dict[str, str]] = Field(default_factory=list, max_length=12)
+
+
+@app.get('/api/datasets')
+def list_datasets(_: AuthenticatedUser = Depends(user_dependency)):
+    rows = []
+    for dataset_id, path in dataset_files().items():
+        try:
+            meta = json.loads(path.read_text()).get('metadata', {})
+        except (OSError, ValueError):
+            continue
+        campaign = meta.get('campaign') or {}
+        rows.append({'id': dataset_id, 'name': campaign.get('name') or meta.get('title') or dataset_id,
+                     'prompt': meta.get('prompt'), 'dataDate': meta.get('data_date'), 'active': dataset_id == active_dataset_id})
+    return {'datasets': rows, 'active': active_dataset_id,
+            'discovery': {'enabled': bool(os.environ.get('YOUTUBE_API_KEYS', '').strip()) and canonical_ai_status()['enabled']}}
+
+
+@app.post('/api/datasets/activate')
+def activate_dataset(request: ActivateRequest, _: AuthenticatedUser = Depends(user_dependency)):
+    global real_provider, active_dataset_id
+    path = dataset_files().get(request.id)
+    if path is None:
+        return JSONResponse(status_code=404, content={'error': 'Unknown dataset.'})
+    try:
+        real_provider = RealDataProvider(json.loads(path.read_text()))
+    except (PlanError, OSError, ValueError) as exc:
+        return JSONResponse(status_code=400, content={'error': 'Could not load that dataset: %s' % exc})
+    active_dataset_id = request.id
+    return {'active': active_dataset_id}
+
+
+def restricted_names() -> set[str]:
+    path = Path(os.environ.get('RESTRICTED_NAMES_FILE', '~/.config/brandmuse/restricted-names.txt')).expanduser()
+    try:
+        return {line.strip() for line in path.read_text().splitlines() if line.strip() and not line.startswith('#')}
+    except OSError:
+        return set()
+
+
+@app.post('/api/discover')
+def start_discovery(request: DiscoverRequest, _: AuthenticatedUser = Depends(user_dependency)):
+    if not canonical_ai_status()['enabled']:
+        return JSONResponse(status_code=503, content={'error': 'Creator search needs live AI to be configured.'})
+    try:
+        job_id = discovery.start(request.prompt, os.environ.get('YOUTUBE_API_KEYS', '').split(','), restricted_names())
+    except PlanError as exc:
+        return JSONResponse(status_code=400, content={'error': str(exc)})
+    return {'job': discovery.status(job_id)}
+
+
+@app.get('/api/discover/{job_id}')
+def discovery_status(job_id: str, _: AuthenticatedUser = Depends(user_dependency)):
+    job = discovery.status(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={'error': 'Unknown search.'})
+    return {'job': job}
+
+
+@app.post('/api/assistant')
+def assistant_turn(request: AssistantRequest, _: AuthenticatedUser = Depends(user_dependency)):
+    if not canonical_ai_status()['enabled']:
+        return JSONResponse(status_code=503, content={'error': canonical_ai_status()['message']})
+    try:
+        inputs = request.inputs.model_dump()
+        before = real_provider.plan_payload(inputs)
+        decision = assistant.decide(real_provider, inputs, before, request.message, request.history)
+        response = {'intent': decision['intent'], 'reply': decision['reply'], 'section': decision['section'],
+                    'discoverPrompt': decision.get('discover_prompt')}
+        if decision['intent'] == 'change':
+            proposed = decision['settings']
+            topics = sorted({c['community'] for c in real_provider.planner.creators})
+            relevance = proposed['planningContext']['relevance']
+            if relevance:  # the provider needs a weight for every topic; keep unspecified topics at full weight
+                relevance = {topic: min(max(float(relevance.get(topic, 1.0)), 0.0), 1.0) for topic in topics}
+            include = [i for i in proposed['include'] if i in real_provider.eligible]
+            updated = PlanRequest.model_validate({
+                **inputs,
+                'budget': max(0, min(int(round(proposed['budget'])), 5_000_000)),
+                'include': include[:50],
+                'exclude': [i for i in proposed['exclude'] if i not in include][:50],
+                'planningContext': {**proposed['planningContext'], 'relevance': relevance},
+            }).model_dump()
+            after = real_provider.plan_payload(updated)
+            target = updated['planningContext'].get('creatorCount', 0)
+            needed = after.get('countBudgetNeeded')
+            if target and needed and needed > updated['budget']:
+                # The user asked for a number of creators; raise the budget just enough to fit them, then say so.
+                updated = PlanRequest.model_validate({**updated, 'budget': min(needed, 5_000_000)}).model_dump()
+                after = real_provider.plan_payload(updated)
+                response['reply'] = decision['reply'] + ' I raised the budget to $%s so %d creators fit.' % (format(updated['budget'], ','), len(after['recommended']['ids']))
+            names = {c['id']: c['name'] for c in real_provider.planner.creators}
+            summary = assistant.change_summary(before, after, names)
+            response.update({'inputs': updated, 'plan': after, 'change': summary, 'section': decision['section'] or 'overview'})
+        return response
+    except (PlanningError, PlanError, ValueError) as exc:
+        return JSONResponse(status_code=400, content={'error': str(exc) if isinstance(exc, PlanError) else 'That change produced invalid settings. Try rephrasing.'})
 
 
 @app.post("/api/plan")

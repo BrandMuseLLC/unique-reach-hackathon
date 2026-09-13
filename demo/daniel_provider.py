@@ -31,7 +31,11 @@ class RealDataProvider:
         self.dataset_version='public-comment-exposure-'+hashlib.sha256(fingerprint).hexdigest()[:16]
         if not self.topics or set(self.topics)-{c['community'] for c in self.planner.creators}:
             raise PlanError('Case-study topics must exist in the supplied dataset.')
-        self.eligible={c['id'] for c in self.planner.creators if c['community'] in self.topics}
+        # Searched datasets can include creators with almost no public comments (often kids' content with comments off).
+        # Their overlap cannot be measured, so they stay visible but out of the plan.
+        self.min_commenters=int(data['metadata'].get('min_commenters', 0))
+        self.thin={c['id'] for c in self.planner.creators if c['commenter_count'] < self.min_commenters}
+        self.eligible={c['id'] for c in self.planner.creators if c['community'] in self.topics and c['id'] not in self.thin}
         self.campaign=({key:campaign[key] for key in ('id','name','category','audience')} | {'eligibleCategories':list(self.topics)} if campaign else
                        {'id':'public-science-engineering-case-study','name':'Science & engineering · historical case study',
                         'category':'Science and technology content','audience':'Illustrative brief for curious adults; audience interests and geography unverified.',
@@ -51,6 +55,8 @@ class RealDataProvider:
         return cls(json.loads(Path(path).read_text())) if path else cls.bundled()
 
     def _eligibility(self, c):
+        if c['id'] in self.thin:
+            return 'ineligible','Too few public comments to measure audience overlap (%d sampled commenters).'%c['commenter_count']
         if c['id'] in self.eligible:
             return 'eligible','Inside the explicit editorial case-study topic scope; consumer audience fit is unverified.'
         return 'ineligible','Outside the selected case-study topic scope. This is not a brand-safety or demographic judgment.'
@@ -80,11 +86,52 @@ class RealDataProvider:
                          'sponsorMentions':c.get('sponsor_mentions'),
                          'creatorCountry':c.get('creator_country'),'audioLanguages':c.get('audio_languages'),
                          'sourceUrl':self.planner.metadata.get('source_url')})
-        baseline=self.planner.optimize({'budget':10000,'objective':'viewer_proxy',
-                                       'exclude':[c['id'] for c in self.planner.creators if c['id'] not in self.eligible]})['baselines']['top_views']
+        budget,roster=self.default_scenario()
+        samples=sorted(c['commenter_count'] for c in self.planner.creators if c['id'] in self.eligible)
+        median_sample=samples[len(samples)//2] if samples else 0
         return {'campaign':self.campaign,'datasetLabel':self.dataset_label,'datasetKind':'observed','datasetVersion':self.dataset_version,
-                'metricLabel':self.metric_label,'creatorMetricLabels':self.creator_metric_labels,'creators':rows,'defaultCurrentRoster':baseline['selected'],
-                'defaultBudget':10000,'provenance':self.public_provenance()}
+                'metricLabel':self.metric_label,'creatorMetricLabels':self.creator_metric_labels,'creators':rows,'defaultCurrentRoster':roster,
+                'defaultBudget':budget,'defaultRosterBasis':self.default_roster_basis,'provenance':self.public_provenance(),
+                'evidence':{'medianSampledCommenters':median_sample,'eligibleCreators':len(self.eligible),'thinCreators':len(self.thin),
+                            'strength':'strong' if median_sample>=300 else 'moderate' if median_sample>=100 else 'thin'}}
+
+    def _count_gap(self, ctx, plan):
+        """Plain-language reasons a creator-count target was missed, plus the budget that would fit the reachable count."""
+        target=ctx.get('creator_count',0)
+        picked=len(plan['selected'])
+        if not target or picked>=target:
+            return {'countNote':None,'countBudgetNeeded':None}
+        pool=[c for c in self.planner.creators if c['id'] in self.eligible and c['id'] not in ctx['exclude']]
+        reachable=min(target,len(pool))
+        parts,needed=[],None
+        if len(pool)<target:
+            thin=' (%d more were set aside for too few public comments)'%len(self.thin) if self.thin else ''
+            parts.append('Only %d creators in this search can be planned%s, so %d is the most possible. Try a broader search for more.'%(len(pool),thin,len(pool)))
+        if picked<reachable:
+            cheapest=sum(sorted(ctx['costs'][c['id']] for c in pool)[:reachable])
+            if cheapest>ctx['budget']:
+                needed=int(-(-cheapest//250)*250)
+                parts.append('The budget fits %d. %d creators need at least $%s.'%(picked,reachable,format(needed,',')))
+            else:
+                parts.append('Topic caps or required creators leave room for only %d. Loosen a cap to reach %d.'%(picked,reachable))
+        return {'countNote':' '.join(parts) or None,'countBudgetNeeded':needed}
+
+    def default_scenario(self):
+        """Starting budget and roster. Searched datasets get a budget that forces a choice and a naive biggest-first roster."""
+        meta=self.planner.metadata
+        if not meta.get('prompt'):
+            self.default_roster_basis='Top creators by historical views that fit the budget.'
+            baseline=self.planner.optimize({'budget':10000,'objective':'viewer_proxy','exclude':[c['id'] for c in self.planner.creators if c['id'] not in self.eligible]})['baselines']['top_views']
+            return 10000,baseline['selected']
+        pool=[c for c in self.planner.creators if c['id'] in self.eligible]
+        total=sum(c['cost'] for c in pool)
+        budget=int(max(min(c['cost'] for c in pool)*3 if pool else 1000, round(total*0.4/250)*250)) if pool else 1000
+        roster,spend=[],0
+        for c in sorted(pool,key=lambda c:(-c['subscribers'],c['name'])):
+            if spend+c['cost']<=budget:
+                roster.append(c['id']); spend+=c['cost']
+        self.default_roster_basis='Biggest creators by subscribers that fit the budget: the roster a brand might pick without overlap data.'
+        return budget,roster
 
     def _ids(self, value, field):
         if not isinstance(value,list) or any(not isinstance(cid,str) or cid not in self.planner.by_id for cid in value):
@@ -190,10 +237,11 @@ class RealDataProvider:
             raise PlanError('Costs must map known creator IDs to nonnegative whole dollars.')
         campaign_excluded=sorted(set(excluded)|(set(self.planner.by_id)-self.eligible))
         planning=request.get('planningContext',{})
-        if not isinstance(planning,dict) or set(planning)-{'brandDescription','relevance','maxPerGroup'}:
+        if not isinstance(planning,dict) or set(planning)-{'brandDescription','relevance','maxPerGroup','creatorCount'}:
             raise PlanError('Unsupported planning context.')
         ctx=self.planner.context({'budget':budget,'objective':'viewer_proxy','must_include':required,'exclude':campaign_excluded,'costs':costs,
-                                 'brand_description':planning.get('brandDescription',''),'relevance':planning.get('relevance',{}),'max_per_group':planning.get('maxPerGroup',{})})
+                                 'brand_description':planning.get('brandDescription',''),'relevance':planning.get('relevance',{}),'max_per_group':planning.get('maxPerGroup',{}),
+                                 'creator_count':planning.get('creatorCount',0)})
         if ctx['relevance'] and set(ctx['relevance'])!={c['community'] for c in self.planner.creators}:
             raise PlanError('Relevance must cover every topic.')
         plan=self.planner.optimize(ctx)
@@ -213,7 +261,8 @@ class RealDataProvider:
         size_change=plan['naive_sum']-current_summary['naive_sum']
         overlap_reduction=(current_summary['naive_sum']-current_summary['reach_est'])-(plan['naive_sum']-plan['reach_est'])
         return {'campaign':self.campaign,'datasetLabel':self.dataset_label,'datasetKind':'observed','datasetVersion':self.dataset_version,'metricLabel':('Topic-relevance-weighted ' + self.metric_label if ctx['relevance'] else self.metric_label),
-                'planningContext':{'brandDescription':ctx['brand_description'],'relevance':ctx['relevance'],'maxPerGroup':ctx['max_per_group']},
+                'planningContext':{'brandDescription':ctx['brand_description'],'relevance':ctx['relevance'],'maxPerGroup':ctx['max_per_group'],'creatorCount':ctx['creator_count']},
+                **self._count_gap(ctx,plan),
                 'creatorMetricLabels':self.creator_metric_labels,'budget':budget,
                 'current':self._score(current,ctx),'recommended':self._score(plan['selected'],ctx,notes=[s['reason'] for s in steps]),
                 'viewsBaseline':self._score(baseline['selected'],ctx),

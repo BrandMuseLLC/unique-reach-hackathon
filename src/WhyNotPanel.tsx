@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { AlreadyCovered } from './Glance';
 
 export type WhyNot = {
   creatorId: string;
@@ -39,8 +40,10 @@ export function WhyNotPanel({ rows, stale, aiEnabled = false, onAsk }: {
     <section className="panel steps-panel" aria-label="Why not this creator">
       <div className="panel-heading compact">
         <h2>Why not…?</h2>
-        <p>Pick an eligible creator the plan left out to see what the roster already covers.{stale ? ' Inputs changed since this plan ran.' : ''}</p>
+        <p>Why creators were left out of the plan.{stale ? ' Updating to your latest changes.' : ''}</p>
       </div>
+      <AlreadyCovered rows={rows} />
+      <p className="why-not-pick">Pick any left-out creator for the full reason:</p>
       <label className="why-not-select">
         <span className="sr-only">Creator left out of the plan</span>
         <select value={row.creatorId} onChange={(event) => setSelected(event.target.value)} aria-label="Creator left out of the plan">
