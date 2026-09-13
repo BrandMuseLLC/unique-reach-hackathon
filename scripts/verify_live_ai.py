@@ -8,7 +8,9 @@ Uses at most three calls. Exit code 0 only when every feature returned a validat
 import argparse
 import json
 import sys
+import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,6 +18,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from demo import ai, ai_explain, ai_labels  # noqa: E402
 from demo.daniel_provider import RealDataProvider  # noqa: E402
 from demo.engine import PlanError  # noqa: E402
+
+
+def app_gate(provider):
+    """Mirror backend.main.canonical_ai_status's billing gate, which the app enforces on top of credentials."""
+    if provider in ("gemini", "gemini_vertex"):
+        return os.environ.get("MUSE_LLM_COVERAGE_CONFIRMED") == "true", "set MUSE_LLM_COVERAGE_CONFIRMED=true once sponsor coverage is confirmed"
+    if provider == "anthropic":
+        try:
+            expires = datetime.fromisoformat(os.environ.get("MUSE_LLM_BRIDGE_EXPIRES_AT", ""))
+            ok = os.environ.get("MUSE_LLM_APP_BRIDGE_AUTHORIZED") == "true" and expires.tzinfo is not None and datetime.now(timezone.utc) < expires
+        except ValueError:
+            ok = False
+        return ok, "the app needs MUSE_LLM_APP_BRIDGE_AUTHORIZED=true and a future timezone-aware MUSE_LLM_BRIDGE_EXPIRES_AT"
+    return False, "unsupported provider"
 
 
 def main() -> int:
@@ -66,7 +82,11 @@ def main() -> int:
     run("brief", brief)
     run("labels", labels)
     run("explain", explain)
-    return 0 if all(results.values()) else 1
+    enabled, hint = app_gate(status["provider"])
+    print("app gate: %s%s" % ("enabled" if enabled else "DISABLED", "" if enabled else " (%s; also run with MUSE_DATASET=observed)" % hint))
+    if not all(results.values()):
+        return 1
+    return 0 if enabled else 3
 
 
 if __name__ == "__main__":

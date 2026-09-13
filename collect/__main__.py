@@ -75,7 +75,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.out:
             Path(args.out).write_text(text + "\n", encoding="utf-8")
         audit = result["audit_biggest_by_subscribers"]
-        print("biggest-%d roster duplicates %.1f%% of sampled commenters" % (len(audit["roster"]), 100 * audit["duplicated_fraction"]))
+        print("biggest-%d roster: %.1f%% of sampled commenter memberships repeat an account on another roster channel" % (
+            len(audit["roster"]), 100 * audit["repeat_membership_fraction"]))
         for row in result["comparisons"]:
             vs = row["vs_top_subscribers"], row["vs_top_views"]
             print("$%-7g %-19s lift vs subs %6s  vs views %6s  (overlap share of gain vs views: %s)" % (

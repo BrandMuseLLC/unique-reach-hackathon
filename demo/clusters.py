@@ -30,9 +30,9 @@ def detect(ids, weights):
     m = total
     while True:
         best, best_gain = None, 1e-12
-        for (a, b), w in sorted(between.items()):
+        for (a, b), w in between.items():
             gain = w / m - strength[a] * strength[b] / (2 * m * m)
-            if gain > best_gain:
+            if gain > best_gain + 1e-15 or (best is not None and abs(gain - best_gain) <= 1e-15 and (a, b) < best):
                 best, best_gain = (a, b), gain
         if best is None:
             break

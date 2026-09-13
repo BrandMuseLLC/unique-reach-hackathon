@@ -229,12 +229,12 @@ def collect_comments(db: sqlite3.Connection, client: Client, max_per_video: int 
                 db.execute("INSERT OR IGNORE INTO video_authors VALUES (?,?)", (video["video_id"], key))
                 collected += 1
             token = body.get("nextPageToken")
-            db.execute("UPDATE videos SET next_page_token=?, collected=? WHERE video_id=?", (token, collected, video["video_id"]))
+            finished = not token or collected >= max_per_video
+            # Token, count and completion commit together, so a restart never mistakes a finished video for a fresh one.
+            db.execute("UPDATE videos SET next_page_token=?, collected=?, status=? WHERE video_id=?",
+                       (token, collected, "done" if finished else "pending", video["video_id"]))
             db.commit()
-            if not token:
+            if finished:
+                done += 1
                 break
-        if db.execute("SELECT status FROM videos WHERE video_id=?", (video["video_id"],)).fetchone()[0] == "pending":
-            db.execute("UPDATE videos SET status='done' WHERE video_id=?", (video["video_id"],))
-            db.commit()
-            done += 1
     return {"videos_done": done, "comments_disabled": disabled}

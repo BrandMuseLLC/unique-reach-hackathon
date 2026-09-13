@@ -194,7 +194,7 @@ def test_headline_reports_both_baselines_and_split(collected, tmp_path, capsys):
     path.write_text(json.dumps(agg))
     assert main(["headline", "--aggregate", str(path), "--budgets", "2000", "--audit-size", "2", "--out", str(tmp_path / "h.json")]) == 0
     printed = capsys.readouterr().out
-    assert "biggest-2 roster duplicates" in printed
+    assert "biggest-2 roster:" in printed and "memberships repeat" in printed
     result = json.loads((tmp_path / "h.json").read_text())
     audit = result["audit_biggest_by_subscribers"]
     # the two biggest channels (crema, shots) share 30 commenters out of 50 + 40 memberships
@@ -410,3 +410,44 @@ def test_cli_stops_cleanly_on_api_error(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli.youtube, "Client", lambda keys: real_client(keys, transport=Broken(), sleep=lambda _: None))
     assert cli.main(["--db", str(tmp_path / "x.sqlite"), "resolve", "--seeds", str(seeds)]) == 1
     assert "rerun the same command to resume" in capsys.readouterr().err
+
+
+def test_restart_after_final_page_does_not_recount(tmp_path):
+    db = youtube.connect(str(tmp_path / "r.sqlite"))
+    client = youtube.Client(["k1"], transport=FakeYouTube(), sleep=lambda _: None)
+    youtube.resolve_channels(db, client, [("@crema", "Espresso")])
+    youtube.list_videos(db, client, per_channel=1)
+    youtube.collect_comments(db, client)
+    assert db.execute("SELECT COUNT(*) FROM videos WHERE status='pending'").fetchone()[0] == 0
+    before = db.execute("SELECT SUM(comments) FROM authors").fetchone()[0]
+    youtube.collect_comments(db, client)
+    assert db.execute("SELECT SUM(comments) FROM authors").fetchone()[0] == before
+
+
+def test_headline_respects_campaign_eligibility(collected):
+    from collect import headline
+    db, _ = collected
+    agg, _ = aggregate.build(db, topic_title="home coffee", eligible_topics=["Espresso"])
+    result = headline.headline(agg, [5000], audit_size=3)
+    pour = "Pour Journal"
+    assert pour not in result["audit_biggest_by_subscribers"]["roster"]
+    assert pour not in result["audit_biggest_by_subscribers"]["same_budget_alternative"]
+    for row in result["comparisons"]:
+        for roster in row["rosters"].values():
+            assert CHANNELS["@pour"][0] not in roster["ids"]
+
+
+def test_dockerfiles_copy_every_demo_module_backend_imports():
+    import ast, pathlib
+    root = pathlib.Path(__file__).resolve().parents[2]
+    needed = {"engine.py", "daniel_provider.py"}
+    for source in (root / "backend/main.py", root / "demo/daniel_provider.py", root / "demo/ai_labels.py", root / "demo/ai_explain.py"):
+        for node in ast.walk(ast.parse(source.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module == "demo":
+                needed |= {alias.name + ".py" for alias in node.names}
+            if source.parent.name == "demo" and isinstance(node, ast.ImportFrom) and node.level == 1:
+                needed |= {node.module + ".py"} if node.module else {alias.name + ".py" for alias in node.names}
+    for dockerfile in ("Dockerfile", "Dockerfile.synthetic"):
+        copy = next(line for line in (root / dockerfile).read_text().splitlines() if line.startswith("COPY demo/"))
+        copied = {part.split("/")[-1] for part in copy.split()[1:-1]}
+        assert needed <= copied, (dockerfile, sorted(needed - copied))

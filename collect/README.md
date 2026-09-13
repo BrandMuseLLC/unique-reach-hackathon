@@ -33,7 +33,8 @@ per video × 10 videos ≈ 2,650 units. That fits the default 10,000-unit daily 
 ## Gate
 
 `build` prints the median pairwise commenter Jaccard and writes the full report. Below 1.5%, widen the seed
-list to adjacent coffee gear before switching verticals. The report also has a cleaning-sensitivity table
+list to adjacent coffee gear before switching verticals. Passing the gate only means there is overlap to work with;
+it does not guarantee lift over either baseline. Check `collect headline` for that. The report also has a cleaning-sensitivity table
 (high-volume author thresholds), commenter-to-view outliers (possible engagement pods), and top pairs.
 
 ## What gets published
@@ -112,7 +113,8 @@ python3 -m collect headline --aggregate data/home-coffee-aggregate.json --budget
 For each budget and both units (exact sampled commenters and the view-scaled proxy), it shows the planner's lift
 over the largest-by-subscribers and largest-by-views rosters under identical quotes, and splits the gain
 into bigger audiences versus less overlap. It also audits the biggest roster by subscribers: the share of
-sampled commenters it pays to reach twice, and what the same budget buys instead. On the bundled 34-channel
+sampled commenter memberships that repeat an account already counted on another roster channel, and what the same budget buys instead.
+These are measured sample shares, not duplicated viewers or wasted spend; the modeled overlap penalty is not measured waste either. On the bundled 34-channel
 sample this reproduces the known result (about 0.4% over the stronger baseline at $10,000), which is why
 the vertical test matters.
 

@@ -124,7 +124,12 @@ class RealDataProvider:
         return pairs
 
     def overlap_payload(self):
-        """Public aggregate graph only: no IDs of commenters or membership sets."""
+        """Public aggregate graph only: no IDs of commenters or membership sets. Computed once; the dataset is immutable."""
+        if getattr(self, '_overlap_cache', None) is None:
+            self._overlap_cache=self._build_overlap_payload()
+        return self._overlap_cache
+
+    def _build_overlap_payload(self):
         nodes=[{'id':c['id'], 'name':c['name'],
                 'sampledCommenters':round(self.planner.mass(c['commenters']))}
                for c in self.planner.creators]

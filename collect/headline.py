@@ -15,8 +15,14 @@ def _split(planner: Planner, ids: list[str], ctx: dict) -> dict:
             "overlap_penalty": summary["naive_sum"] - summary["reach_est"], "spend": summary["spend"]}
 
 
+def ineligible(planner: Planner) -> list[str]:
+    """Creators outside the aggregate's campaign topics, excluded exactly as the app excludes them."""
+    topics = (planner.metadata.get("campaign") or {}).get("eligibleCategories")
+    return sorted(c["id"] for c in planner.creators if topics and c["community"] not in topics)
+
+
 def compare(planner: Planner, budget: float, objective: str) -> dict:
-    ctx = planner.context({"budget": budget, "objective": objective})
+    ctx = planner.context({"budget": budget, "objective": objective, "exclude": ineligible(planner)})
     plan = planner.optimize(ctx)
     rows = {"planner": plan["selected"], "top_subscribers": plan["baselines"]["top_subs"]["selected"],
             "top_views": plan["baselines"]["top_views"]["selected"]}
@@ -33,16 +39,20 @@ def compare(planner: Planner, budget: float, objective: str) -> dict:
 
 
 def audit_biggest(planner: Planner, size: int) -> dict:
-    ranked = sorted(planner.creators, key=lambda c: -c["subscribers"])[:size]
+    blocked = set(ineligible(planner))
+    ranked = sorted((c for c in planner.creators if c["id"] not in blocked), key=lambda c: -c["subscribers"])[:size]
     ids = [c["id"] for c in ranked]
     result = planner.audit({"roster_ids": ids, "objective": "observed_commenters"})
+    if blocked:  # audit() re-plans over the whole pool; recompute the alternative inside the campaign scope
+        result["optimized_alternative"] = planner.optimize({"budget": result["spend"], "objective": "observed_commenters", "exclude": sorted(blocked)})
     alt = result["optimized_alternative"]
     return {"roster": [c["name"] for c in ranked], "spend": result["spend"],
             "sampled_commenters_reached": result["reach_est"], "sum_of_individual_audiences": result["naive_sum"],
-            "duplicated_fraction": result["duplicated_fraction"],
+            "repeat_membership_fraction": result["duplicated_fraction"],
             "same_budget_alternative": [planner.by_id[i]["name"] for i in alt["selected"]],
             "alternative_commenters_reached": alt["reach_est"],
-            "note": "Sampled commenter accounts, not unique viewers. Quotes are the dataset's scenario values."}
+            "note": "Share of the roster's sampled commenter memberships that repeat an account already counted on another roster channel. "
+                    "Measured in the historical sample; not duplicated viewers, wasted spend or campaign outcomes."}
 
 
 def headline(data: dict, budgets: list[float], audit_size: int = 6) -> dict:
@@ -53,6 +63,8 @@ def headline(data: dict, budgets: list[float], audit_size: int = 6) -> dict:
         "comparisons": [compare(planner, b, obj) for b in budgets for obj in ("observed_commenters", "viewer_proxy")],
         "audit_biggest_by_subscribers": audit_biggest(planner, min(audit_size, len(planner.creators))),
         "rules": ["Report both baselines; never only the weaker one.",
+                  "A passing overlap gate does not guarantee lift over either baseline.",
+                  "The modeled overlap penalty is not measured wasted spend or duplicated viewers.",
                   "If from_less_overlap is small relative to from_bigger_audiences, the story is audience sizing, not deduplication.",
                   "Never present these as unique viewers or campaign lift."],
     }

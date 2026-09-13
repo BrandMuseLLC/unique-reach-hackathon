@@ -17,7 +17,7 @@ ENV PORT=8080
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
-COPY demo/engine.py demo/ai.py demo/daniel_provider.py ./demo/
+COPY demo/engine.py demo/ai.py demo/ai_explain.py demo/ai_labels.py demo/clusters.py demo/daniel_provider.py ./demo/
 ENV MUSE_DATASET=synthetic
 ENV MUSE_LLM_COVERAGE_CONFIRMED=false
 COPY --from=frontend /app/dist ./dist
