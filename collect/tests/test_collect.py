@@ -272,3 +272,28 @@ def test_plan_explains_left_out_creators(collected):
     if crema in left_out:  # crema's espresso audience is mostly reached through shots
         assert left_out[crema]["overlapsWith"][0]["creatorId"] == shots
         assert left_out[crema]["overlapsWith"][0]["sharedCommenters"] == 30
+
+
+def test_explanations_are_grounded_in_plan_numbers(collected, monkeypatch):
+    from demo import ai_explain
+    from demo.engine import PlanError
+    db, _ = collected
+    agg, _ = aggregate.build(db, topic_title="home coffee", cpm=None)
+    provider = RealDataProvider(agg)
+    plan = provider.plan_payload({"budget": 2000, "currentRoster": [CHANNELS["@crema"][0]]})
+    left = plan["whyNot"][0]
+    covered = round(left["alreadyCoveredShare"] * 100)
+    monkeypatch.setenv("MUSE_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setenv("MUSE_LLM_MODEL", "claude-sonnet-5")
+
+    def reply(text):
+        return lambda req: {"content": [{"type": "text", "text": text}]}
+
+    monkeypatch.setattr(ai, "_last_call", None)
+    good = "%s is out: %d%% of its audience is already covered and it costs $%s." % (left["creatorName"], covered, format(int(left["cost"]), ","))
+    assert ai_explain.explain(plan, "why not them?", transport=reply(good))["answer"] == good
+
+    monkeypatch.setattr(ai, "_last_call", None)
+    with pytest.raises(PlanError, match="not in the plan evidence"):
+        ai_explain.explain(plan, "why not them?", transport=reply("It would reach 987,654 more viewers."))

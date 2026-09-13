@@ -73,6 +73,14 @@ topics. With live AI configured, "Name clusters with AI" in the overlap explorer
 cluster from channel names and public video titles only (`POST /api/overlap/labels`). Invalid model output keeps
 the rule labels. Clusters describe overlapping sampled commenters, not demographics.
 
+## Why not, and grounded explanations
+
+`/api/plan` returns `whyNot` for eligible creators the plan left out: the share of their modeled audience already
+represented, which selected creators overlap them, what adding them would add, and the reason. The "Why not…?" panel
+shows it without AI. With live AI configured, "Ask AI" (`POST /api/explain`) answers questions about the plan from
+that evidence only; the server recomputes the plan from the inputs and withholds any answer that cites a number
+not present in the evidence.
+
 ## Headline numbers
 
 ```sh

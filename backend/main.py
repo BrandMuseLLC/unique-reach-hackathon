@@ -8,7 +8,7 @@ from pathlib import Path
 
 from demo.daniel_provider import RealDataProvider
 from demo.engine import PlanError
-from demo import ai, ai_labels
+from demo import ai, ai_explain, ai_labels
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
@@ -228,6 +228,23 @@ def label_overlap_clusters(_: AuthenticatedUser = Depends(user_dependency)):
         payload = real_provider.overlap_payload()
         return {'clusters': ai_labels.label_clusters(payload['clusters'], real_provider.planner.by_id)}
     except PlanError as exc:
+        return JSONResponse(status_code=400, content={'error': str(exc)})
+
+
+class ExplainRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    question: str = Field(min_length=1, max_length=500)
+    inputs: PlanRequest
+
+
+@app.post('/api/explain')
+def explain_plan(request: ExplainRequest, _: AuthenticatedUser = Depends(user_dependency)):
+    if not canonical_ai_status()['enabled']:
+        return JSONResponse(status_code=503, content={'error': canonical_ai_status()['message']})
+    try:
+        plan = real_provider.plan_payload(request.inputs.model_dump())  # recompute; never trust a client-sent plan
+        return ai_explain.explain(plan, request.question)
+    except (PlanningError, PlanError) as exc:
         return JSONResponse(status_code=400, content={'error': str(exc)})
 
 

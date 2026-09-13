@@ -893,7 +893,17 @@ function App() {
           </section>
         )}
 
-        {result?.whyNot && <WhyNotPanel rows={result.whyNot} stale={resultIsStale} />}
+        {result?.whyNot && <WhyNotPanel rows={result.whyNot} stale={resultIsStale} aiEnabled={aiStatus.enabled} onAsk={async (question) => {
+          if (!plannedInputs) return 'Run the plan first.';
+          try {
+            const response = await fetch('/api/explain', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ question, inputs: plannedInputs }) });
+            const payload = await response.json();
+            return response.ok ? payload.answer : (payload.error ?? 'The explanation request failed.');
+          } catch {
+            return 'The explanation request failed.';
+          }
+        }} />}
       </section>
     </main>
   );
