@@ -28,6 +28,8 @@ type Creator = {
   videoCount?: number;
   sourceUrl?: string;
   sponsorMentions?: SponsorMentions | null;
+  creatorCountry?: string | null;
+  audioLanguages?: Record<string, number> | null;
 };
 
 type PlanningContext = { brandDescription: string; relevance: Record<string, number>; maxPerGroup: Record<string, number> };
@@ -988,6 +990,16 @@ function CreatorInspector({
           <dt>Audience note</dt>
           <dd>{creator.audienceNote}</dd>
         </div>
+        {creator.audioLanguages && (
+          <div>
+            <dt>Creator country and language</dt>
+            <dd>
+              {creator.creatorCountry ? `Declares ${creator.creatorCountry}` : 'No declared country'}; sampled video audio:{' '}
+              {Object.entries(creator.audioLanguages).map(([language, videos]) => `${language} (${videos})`).join(', ')}.
+              {' '}Describes the creator, not where the audience lives.
+            </dd>
+          </div>
+        )}
         {creator.sponsorMentions && (
           <div>
             <dt>Sponsor mentions</dt>

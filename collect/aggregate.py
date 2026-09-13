@@ -144,6 +144,8 @@ def build(db: sqlite3.Connection, *, topic_title: str, eligible_topics: list[str
             "video_count": len(vids), "comment_count": int(comment_totals[cid]),
             "video_titles": [redact(v["title"], restricted) for v in recent[:3] if v["title"]],
             "sponsor_mentions": sponsor_mentions(recent, restricted),
+            "creator_country": ch.get("country"),
+            "audio_languages": dict(Counter((v.get("audio_language") or "unknown").split("-")[0] for v in vids).most_common()),
         })
     kept = {c["id"] for c in creators}
     merged: Counter = Counter()
@@ -161,6 +163,7 @@ def build(db: sqlite3.Connection, *, topic_title: str, eligible_topics: list[str
         "data_date": now,
         "views_basis": "Median public view count across collected recent uploads; view events, not unique viewers.",
         "quote_basis": ("Modeled at $%g CPM on median recent views; editable in the planner." % cpm) if cpm else "Uniform scenario quote; editable in the planner.",
+        "country_basis": "Channel's self-declared country on YouTube; says nothing about where its audience lives.",
         "group_basis": "Editorial topic assigned in the seed list, not inferred audience demographics.",
         "subscriber_basis": "Largest by public subscriber count",
         "campaign": campaign or {

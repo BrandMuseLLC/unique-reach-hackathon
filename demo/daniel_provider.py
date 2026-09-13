@@ -78,6 +78,7 @@ class RealDataProvider:
                          'baseCost':int(c['cost']),'costBasis':'Hypothetical case-study quote; editable, not a researched rate.',
                          'commenterCount':c['commenter_count'],'videoCount':c.get('video_count'),
                          'sponsorMentions':c.get('sponsor_mentions'),
+                         'creatorCountry':c.get('creator_country'),'audioLanguages':c.get('audio_languages'),
                          'sourceUrl':self.planner.metadata.get('source_url')})
         baseline=self.planner.optimize({'budget':10000,'objective':'viewer_proxy',
                                        'exclude':[c['id'] for c in self.planner.creators if c['id'] not in self.eligible]})['baselines']['top_views']

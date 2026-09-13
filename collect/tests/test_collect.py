@@ -21,6 +21,10 @@ AUTHORS = {**{"a%d" % i: ["crema", "shots"] for i in range(30)},
            **{"e%d" % i: ["pour", "crema"] for i in range(3)}}
 
 
+def slug_of(cid):
+    return next(k[1:] for k, v in CHANNELS.items() if v[0] == cid)
+
+
 class FakeYouTube:
     def __init__(self, quota_fail_first_key=False, disabled_video=None):
         self.calls = []
@@ -39,7 +43,7 @@ class FakeYouTube:
             if not row:
                 return 200, {"items": []}
             cid, title, _, subs = row
-            return 200, {"items": [{"id": cid, "snippet": {"title": title, "customUrl": q["forHandle"]},
+            return 200, {"items": [{"id": cid, "snippet": {"title": title, "customUrl": q["forHandle"], **({"country": "US"} if slug_of(cid) != "pour" else {})},
                                     "statistics": {"subscriberCount": str(subs)},
                                     "contentDetails": {"relatedPlaylists": {"uploads": "UU" + cid[2:]}}}]}
         if resource == "playlistItems":
@@ -52,7 +56,8 @@ class FakeYouTube:
                 desc = ("This video is sponsored by Burr Works. Use code CREMA10 at Bean Box. Collab with @GrinderGuy and @shots." if slug == "crema" and n == "0"
                         else "Thanks to my Patreon supporters. Grinder tips from @GrinderGuy" if slug == "pour" else "Thanks to my Patreon supporters")
                 items.append({"id": vid, "snippet": {"title": "%s video %s" % (slug, n), "description": desc,
-                                                     "publishedAt": "2026-08-0%sT00:00:00Z" % (int(n) + 1)},
+                                                     "publishedAt": "2026-08-0%sT00:00:00Z" % (int(n) + 1),
+                                                     "defaultAudioLanguage": "en-US" if slug != "pour" else "de"},
                               "statistics": {"viewCount": str(10000 * (int(n) + 1)), "commentCount": "99"},
                               "contentDetails": {"duration": "PT10M"}})
             return 200, {"items": items}
@@ -332,3 +337,45 @@ def test_benchmark_matches_handles_names_and_ids(collected, tmp_path, capsys):
     bench.write_text("a,b,overlap\n@crema,@shots,41%%\nCrema Lab,Pour Journal,6\n%s,@pour,1.5\n@crema,@unknown,9\n" % CHANNELS["@shots"][0])
     assert main(["validate", "--aggregate", str(path), "--benchmark", str(bench), "--out", str(tmp_path / "v.json")]) == 0
     assert "matched=3 unmatched=1 spearman=1.000" in capsys.readouterr().out
+
+
+def test_creator_country_and_language_reach_api_and_ai(collected, tmp_path, monkeypatch):
+    db, _ = collected
+    agg, _ = aggregate.build(db, topic_title="home coffee")
+    crema, pour = CHANNELS["@crema"][0], CHANNELS["@pour"][0]
+    by_id = {c["id"]: c for c in agg["creators"]}
+    assert by_id[crema]["creator_country"] == "US" and by_id[crema]["audio_languages"] == {"en": 2}
+    assert by_id[pour]["creator_country"] is None and by_id[pour]["audio_languages"] == {"de": 2}
+    provider = RealDataProvider(agg)
+    row = next(c for c in provider.creators_payload()["creators"] if c["id"] == pour)
+    assert row["audioLanguages"] == {"de": 2} and row["creatorCountry"] is None
+
+    sent = {}
+    def transport(req):
+        sent["body"] = json.loads(req.data)
+        return {"content": [{"type": "tool_use", "name": "set_reach_brief", "input": {
+            "action": "clarify", "reply": "Which market?", "budget": 2000, "must_include": [], "exclude": [],
+            "max_per_group": {}, "brand_description": "", "relevance": {}, "relevance_reasons": []}}]}
+    monkeypatch.setenv("MUSE_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setenv("MUSE_LLM_MODEL", "claude-sonnet-5")
+    monkeypatch.setattr(ai, "_last_call", None)
+    ai.live_chat(provider.planner, {"message": "US-based creators only", "constraints": {"budget": 2000}}, transport=transport)
+    evidence = {c["id"]: c for c in json.loads(sent["body"]["messages"][0]["content"])["creators"]}
+    assert evidence[crema]["creator_country"] == "US" and "creator_country" not in evidence[pour]
+    assert "filters creators, not audience geography" in sent["body"]["system"]
+
+
+def test_connect_migrates_older_databases(tmp_path):
+    import sqlite3 as sq
+    path = tmp_path / "old.sqlite"
+    old = sq.connect(path)
+    old.executescript("""CREATE TABLE channels (channel_id TEXT PRIMARY KEY, handle TEXT, title TEXT NOT NULL, topic TEXT NOT NULL,
+        subscribers INTEGER, uploads TEXT, status TEXT NOT NULL DEFAULT 'resolved');
+        CREATE TABLE videos (video_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, title TEXT, description TEXT, published_at TEXT,
+        views INTEGER, comment_count INTEGER, duration TEXT, status TEXT NOT NULL DEFAULT 'pending', next_page_token TEXT,
+        collected INTEGER NOT NULL DEFAULT 0);""")
+    old.close()
+    db = youtube.connect(str(path))
+    assert "country" in {r[1] for r in db.execute("PRAGMA table_info(channels)")}
+    assert "audio_language" in {r[1] for r in db.execute("PRAGMA table_info(videos)")}

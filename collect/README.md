@@ -46,6 +46,12 @@ Commenter channel IDs are salted and hashed in the local database only. Names li
 file (keep it outside the repo) are replaced in sponsor mentions and titles before anything is written.
 YouTube API Services terms limit retention: delete or refresh `data/collection.sqlite` within 30 days.
 
+## Creator country and language
+
+Each creator carries `creator_country` (the channel's self-declared country, often missing) and `audio_languages`
+(declared audio language counts across sampled videos). The AI brief interpreter may exclude creators on these when
+asked ("US-based creators", "English-language creators") and must say it filtered creators, not audience geography.
+
 ## Sponsor mentions
 
 Pattern matches such as "sponsored by X" or "use code Y at X", plus disclosure markers (`#ad`, "paid promotion").

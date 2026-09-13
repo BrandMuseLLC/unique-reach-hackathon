@@ -29,10 +29,10 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS channels (
     channel_id TEXT PRIMARY KEY, handle TEXT, title TEXT NOT NULL, topic TEXT NOT NULL,
-    subscribers INTEGER, uploads TEXT, status TEXT NOT NULL DEFAULT 'resolved');
+    subscribers INTEGER, uploads TEXT, status TEXT NOT NULL DEFAULT 'resolved', country TEXT);
 CREATE TABLE IF NOT EXISTS videos (
     video_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, title TEXT, description TEXT,
-    published_at TEXT, views INTEGER, comment_count INTEGER, duration TEXT,
+    published_at TEXT, views INTEGER, comment_count INTEGER, duration TEXT, audio_language TEXT,
     status TEXT NOT NULL DEFAULT 'pending', next_page_token TEXT, collected INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS authors (
     channel_id TEXT NOT NULL, author_key TEXT NOT NULL, comments INTEGER NOT NULL,
@@ -109,6 +109,9 @@ def connect(path: str) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    for table, column in (("channels", "country"), ("videos", "audio_language")):  # databases from earlier runs
+        if column not in {r[1] for r in db.execute("PRAGMA table_info(%s)" % table)}:
+            db.execute("ALTER TABLE %s ADD COLUMN %s TEXT" % (table, column))
     if db.execute("SELECT v FROM meta WHERE k='salt'").fetchone() is None:
         db.execute("INSERT INTO meta VALUES ('salt', ?)", (secrets.token_hex(32),))
         db.commit()
@@ -152,12 +155,12 @@ def resolve_channels(db: sqlite3.Connection, client: Client, seeds: list[tuple[s
         stats = item.get("statistics", {})
         subscribers = None if stats.get("hiddenSubscriberCount") else int(stats.get("subscriberCount", 0))
         db.execute(
-            "INSERT INTO channels (channel_id, handle, title, topic, subscribers, uploads) VALUES (?,?,?,?,?,?) "
+            "INSERT INTO channels (channel_id, handle, title, topic, subscribers, uploads, country) VALUES (?,?,?,?,?,?,?) "
             "ON CONFLICT(channel_id) DO UPDATE SET handle=excluded.handle, title=excluded.title, topic=excluded.topic, "
-            "subscribers=excluded.subscribers, uploads=excluded.uploads",
+            "subscribers=excluded.subscribers, uploads=excluded.uploads, country=excluded.country",
             (item["id"], item["snippet"].get("customUrl") or (ident if ident.startswith("@") else None),
              item["snippet"]["title"], topic, subscribers,
-             item.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads")))
+             item.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads"), item["snippet"].get("country")))
         resolved += 1
     db.commit()
     return {"resolved": resolved, "not_found": failed}
@@ -181,13 +184,14 @@ def list_videos(db: sqlite3.Connection, client: Client, per_channel: int = 10) -
             for v in details:
                 stats = v.get("statistics", {})
                 db.execute(
-                    "INSERT OR IGNORE INTO videos (video_id, channel_id, title, description, published_at, views, comment_count, duration, status) "
-                    "VALUES (?,?,?,?,?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO videos (video_id, channel_id, title, description, published_at, views, comment_count, duration, status, audio_language) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (v["id"], channel["channel_id"], v["snippet"].get("title"), v["snippet"].get("description"),
                      v["snippet"].get("publishedAt"), int(stats.get("viewCount", 0)),
                      int(stats["commentCount"]) if "commentCount" in stats else None,
                      v.get("contentDetails", {}).get("duration"),
-                     "pending" if "commentCount" in stats else "comments_hidden"))
+                     "pending" if "commentCount" in stats else "comments_hidden",
+                     v["snippet"].get("defaultAudioLanguage") or v["snippet"].get("defaultLanguage")))
                 added += 1
         db.execute("UPDATE channels SET status='videos_listed' WHERE channel_id=?", (channel["channel_id"],))
         db.commit()
