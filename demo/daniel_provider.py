@@ -9,8 +9,10 @@ import json
 from pathlib import Path
 
 if __package__:
+    from . import clusters as cluster_mod
     from .engine import Planner, PlanError
 else:
+    import clusters as cluster_mod
     from engine import Planner, PlanError
 
 
@@ -132,8 +134,13 @@ class RealDataProvider:
             union=counts[pair['a']]+counts[pair['b']]-shared
             pairs.append({'a':pair['a'],'b':pair['b'],'sharedCommenters':shared,
                           'jaccard':shared/union if union else 0})
+        jaccard={(min(p['a'],p['b']),max(p['a'],p['b'])):p['jaccard'] for p in pairs}
+        by_id=self.planner.by_id
+        groups=cluster_mod.detect(list(counts), jaccard)
         return {'datasetVersion':self.dataset_version,
                 'nodes':nodes, 'pairs':pairs,
+                'clusters':cluster_mod.summarize(groups, by_id, jaccard),
+                'clusterMethod':'Greedy modularity on commenter Jaccard. A cluster is overlapping sampled commenters, not a demographic segment.',
                 'metric':'Jaccard = shared sampled commenters / sampled commenters in either channel.'}
 
     def _roster_diagnostic(self, ids, ctx):

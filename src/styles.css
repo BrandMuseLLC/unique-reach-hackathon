@@ -1272,3 +1272,47 @@ dd {
 .explore-selected { background: #f3edf9; }
 @media (max-width: 900px) { .explore-layout { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .explore-panel { padding: 14px; } .explore-panel .panel-heading { align-items: flex-start; flex-direction: column; } .explore-controls { flex-direction: column; } .explore-table th, .explore-table td { padding: 8px 4px; } .explore-table button { padding: 8px 5px; } }
+
+.explore-clusters {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--brandmuse-light-border);
+  border-radius: 8px;
+  background: var(--brandmuse-light-surface);
+}
+
+.explore-clusters-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.explore-clusters ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.explore-clusters li p {
+  margin: 4px 0;
+}
+
+.explore-cluster-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.explore-cluster-members button {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.explore-cluster-members button[aria-pressed="true"] {
+  border-color: var(--brandmuse-purple);
+  color: var(--brandmuse-purple);
+}

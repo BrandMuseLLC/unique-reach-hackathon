@@ -49,7 +49,8 @@ class FakeYouTube:
             items = []
             for vid in q["id"].split(","):
                 slug, n = vid.split("-v")
-                desc = "This video is sponsored by Burr Works. Use code CREMA10 at Bean Box." if slug == "crema" and n == "0" else "Thanks to my Patreon supporters"
+                desc = ("This video is sponsored by Burr Works. Use code CREMA10 at Bean Box. Collab with @GrinderGuy and @shots." if slug == "crema" and n == "0"
+                        else "Thanks to my Patreon supporters. Grinder tips from @GrinderGuy" if slug == "pour" else "Thanks to my Patreon supporters")
                 items.append({"id": vid, "snippet": {"title": "%s video %s" % (slug, n), "description": desc,
                                                      "publishedAt": "2026-08-0%sT00:00:00Z" % (int(n) + 1)},
                               "statistics": {"viewCount": str(10000 * (int(n) + 1)), "commentCount": "99"},
@@ -138,7 +139,7 @@ def test_sponsor_scan_and_restricted_redaction():
 
 def test_collected_aggregate_plans_through_provider_and_ai_evidence(collected, tmp_path, monkeypatch):
     db, _ = collected
-    agg, _ = aggregate.build(db, topic_title="home coffee")
+    agg, _ = aggregate.build(db, topic_title="home coffee", cpm=None)
     path = tmp_path / "agg.json"
     path.write_text(json.dumps(agg))
     provider = RealDataProvider.from_env({"MUSE_OBSERVED_DATA": str(path)})
@@ -183,7 +184,7 @@ def test_cli_build_writes_files(collected, tmp_path, capsys):
 
 def test_headline_reports_both_baselines_and_split(collected, tmp_path, capsys):
     db, _ = collected
-    agg, _ = aggregate.build(db, topic_title="home coffee")
+    agg, _ = aggregate.build(db, topic_title="home coffee", cpm=None)
     path = tmp_path / "agg.json"
     path.write_text(json.dumps(agg))
     assert main(["headline", "--aggregate", str(path), "--budgets", "2000", "--audit-size", "2", "--out", str(tmp_path / "h.json")]) == 0
@@ -199,3 +200,60 @@ def test_headline_reports_both_baselines_and_split(collected, tmp_path, capsys):
         split = row["vs_top_views"]
         base, plan = row["rosters"]["top_views"], row["rosters"]["planner"]
         assert abs((plan["reach"] - base["reach"]) - (split["from_bigger_audiences"] + split["from_less_overlap"])) < 1e-6
+
+
+def test_modeled_quotes_and_handle_suggestions(collected):
+    db, _ = collected
+    agg, _ = aggregate.build(db, topic_title="home coffee")
+    assert {c["cost"] for c in agg["creators"]} == {250}  # 15,000 median views at $15 CPM rounds up to the floor
+    assert aggregate.modeled_quote(400_000, 15) == 6000 and aggregate.modeled_quote(90_000, 15) == 1250
+    assert "CPM" in agg["creators"][0]["quote_basis"]
+    suggestions = aggregate.suggest_handles(db, min_channels=2)
+    assert suggestions == [{"handle": "@GrinderGuy", "mentioned_by_channels": 2}]  # @shots is already in the pool
+
+
+def test_clusters_recover_planted_groups_deterministically():
+    from demo import clusters
+    ids = ["a1", "a2", "a3", "b1", "b2", "b3", "solo"]
+    w = {}
+    for group in (["a1", "a2", "a3"], ["b1", "b2", "b3"]):
+        for x, a in enumerate(group):
+            for b in group[x + 1:]:
+                w[(a, b)] = 0.05
+    w[("a1", "b1")] = 0.002
+    groups = clusters.detect(ids, w)
+    assert groups == [["a1", "a2", "a3"], ["b1", "b2", "b3"], ["solo"]]
+    assert clusters.detect(list(reversed(ids)), w) == groups
+
+
+def test_provider_clusters_and_ai_labels(collected, tmp_path, monkeypatch):
+    from demo import ai_labels
+    from demo.engine import PlanError
+    db, _ = collected
+    agg, _ = aggregate.build(db, topic_title="home coffee")
+    provider = RealDataProvider(agg)
+    payload = provider.overlap_payload()
+    crema, shots, pour = (CHANNELS[h][0] for h in ("@crema", "@shots", "@pour"))
+    assert sorted(i for c in payload["clusters"] for i in c["members"]) == sorted([crema, shots, pour])
+    espresso = next(c for c in payload["clusters"] if len(c["members"]) > 1)
+    assert espresso["label"].startswith("Espresso") and espresso["labelSource"] == "rule"
+
+    monkeypatch.setenv("MUSE_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setenv("MUSE_LLM_MODEL", "claude-sonnet-5")
+    monkeypatch.setattr(ai, "_last_call", None)
+    sent = {}
+    def transport(req):
+        sent["body"] = json.loads(req.data)
+        return {"content": [{"type": "tool_use", "name": "name_clusters", "input": {"labels": [
+            {"cluster_id": espresso["id"], "name": "Espresso technique", "summary": "Shot dialing and machine walkthroughs."}]}}]}
+    labeled = ai_labels.label_clusters(payload["clusters"], provider.planner.by_id, transport=transport)
+    named = next(c for c in labeled if c["id"] == espresso["id"])
+    assert named["label"] == "Espresso technique" and named["labelSource"] == "model"
+    assert "UC" not in json.dumps(sent["body"]["messages"])  # only names, topics and titles are sent
+
+    monkeypatch.setattr(ai, "_last_call", None)
+    bad = lambda req: {"content": [{"type": "tool_use", "name": "name_clusters", "input": {"labels": [
+        {"cluster_id": espresso["id"], "name": "x" * 80, "summary": "too long name"}]}}]}
+    with pytest.raises(PlanError):
+        ai_labels.label_clusters(payload["clusters"], provider.planner.by_id, transport=bad)

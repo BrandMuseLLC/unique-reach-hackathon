@@ -11,6 +11,7 @@ import statistics
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from itertools import combinations
+import math
 
 SPONSOR_PATTERNS = [
     ("sponsor", re.compile(r"\b(?:sponsored by|thanks to|thank you to|brought to you by|in partnership with|partnered with)\s+"
@@ -23,6 +24,12 @@ NOT_BRANDS = {"patreon", "patrons", "my patrons", "youtube", "everyone", "you", 
 
 
 RESTRICTED = "Restricted brand"
+HANDLE = re.compile(r"(?<![\w.])@([A-Za-z0-9._-]{3,30})\b")
+
+
+def modeled_quote(views: float, cpm: float) -> int:
+    """Same rounding as the planner app's modeled quotes: nearest $250, at least $250."""
+    return max(250, math.floor(views * cpm / 1000 / 250 + 0.5) * 250)
 
 
 def restricted_match(brand: str, restricted: set[str]) -> bool:
@@ -102,7 +109,7 @@ def _segments(db: sqlite3.Connection, channel_ids: set[str], max_comments_per_au
 
 
 def build(db: sqlite3.Connection, *, topic_title: str, eligible_topics: list[str] | None = None,
-          default_quote: int = 1000, max_comments_per_author: int | None = 200, gate_threshold: float = 0.015,
+          default_quote: int = 1000, cpm: float | None = 15.0, max_comments_per_author: int | None = 200, gate_threshold: float = 0.015,
           campaign: dict | None = None, restricted: set[str] | None = None) -> tuple[dict, dict]:
     channels = {r["channel_id"]: dict(r) for r in db.execute("SELECT * FROM channels")}
     videos_by_channel: dict[str, list[dict]] = defaultdict(list)
@@ -124,11 +131,14 @@ def build(db: sqlite3.Connection, *, topic_title: str, eligible_topics: list[str
             skipped.append({"channel": ch["handle"] or ch["title"], "reason": "no collected commenters" if vids else "no collected videos"})
             continue
         recent = sorted(vids, key=lambda v: v["published_at"] or "", reverse=True)
+        views = float(statistics.median(v["views"] for v in vids))
         creators.append({
             "id": cid, "name": ch["title"], "handle": ch["handle"], "community": ch["topic"],
-            "views": float(statistics.median(v["views"] for v in vids)),
-            "subscribers": ch["subscribers"] or 0, "cost": default_quote,
-            "quote_basis": "Uniform $%d scenario assumption; replace with real quotes before any spend decision." % default_quote,
+            "views": views,
+            "subscribers": ch["subscribers"] or 0,
+            "cost": modeled_quote(views, cpm) if cpm else default_quote,
+            "quote_basis": ("Modeled at $%g CPM on median recent views, rounded to $250; editable, not a creator rate card." % cpm) if cpm
+                           else "Uniform $%d scenario assumption; replace with real quotes before any spend decision." % default_quote,
             "video_count": len(vids), "comment_count": int(comment_totals[cid]),
             "video_titles": [redact(v["title"], restricted) for v in recent[:3] if v["title"]],
             "sponsor_mentions": sponsor_mentions(recent, restricted),
@@ -148,7 +158,7 @@ def build(db: sqlite3.Connection, *, topic_title: str, eligible_topics: list[str
         "license": "Aggregate membership counts only; no comment text or commenter identifiers. YouTube API Services terms apply.",
         "data_date": now,
         "views_basis": "Median public view count across collected recent uploads; view events, not unique viewers.",
-        "quote_basis": "Uniform scenario quote; editable in the planner.",
+        "quote_basis": ("Modeled at $%g CPM on median recent views; editable in the planner." % cpm) if cpm else "Uniform scenario quote; editable in the planner.",
         "group_basis": "Editorial topic assigned in the seed list, not inferred audience demographics.",
         "subscriber_basis": "Largest by public subscriber count",
         "campaign": campaign or {
@@ -201,3 +211,18 @@ def build(db: sqlite3.Connection, *, topic_title: str, eligible_topics: list[str
                     "Delete or refresh the local collection database within 30 days."],
     }
     return aggregate, report
+
+
+def suggest_handles(db: sqlite3.Connection, min_channels: int = 1) -> list[dict]:
+    """@handles mentioned in collected descriptions that are not yet in the pool. Costs no API quota."""
+    known = {(r["handle"] or "").lower().lstrip("@") for r in db.execute("SELECT handle FROM channels")}
+    mentions: dict[str, set[str]] = defaultdict(set)
+    spelling: dict[str, str] = {}
+    for row in db.execute("SELECT channel_id, description FROM videos ORDER BY video_id"):
+        for match in HANDLE.finditer(row["description"] or ""):
+            handle = match.group(1).rstrip("._-")
+            if handle.lower() not in known:
+                spelling.setdefault(handle.lower(), handle)
+                mentions[handle.lower()].add(row["channel_id"])
+    rows = [{"handle": "@" + spelling[h], "mentioned_by_channels": len(chans)} for h, chans in mentions.items() if len(chans) >= min_channels]
+    return sorted(rows, key=lambda r: (-r["mentioned_by_channels"], r["handle"]))

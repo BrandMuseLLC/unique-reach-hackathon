@@ -44,7 +44,11 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--eligible", default="", help="Comma-separated topics eligible for the case study (default: all)")
     build.add_argument("--max-comments-per-author", type=int, default=200)
     build.add_argument("--gate-threshold", type=float, default=0.015)
+    build.add_argument("--cpm", type=float, default=15.0, help="Modeled quote CPM; 0 uses a uniform --default-quote")
+    build.add_argument("--default-quote", type=int, default=1000)
     build.add_argument("--restricted", help="Newline-separated brand names to redact; keep this file outside the repo")
+    suggest = sub.add_parser("suggest", help="List @handles mentioned in collected descriptions (no quota)")
+    suggest.add_argument("--min-channels", type=int, default=2)
     head = sub.add_parser("headline")
     head.add_argument("--aggregate", required=True)
     head.add_argument("--budgets", default="3000,6000,10000")
@@ -71,11 +75,16 @@ def main(argv: list[str] | None = None) -> int:
 
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
     db = youtube.connect(args.db)
+    if args.command == "suggest":
+        for row in aggregate.suggest_handles(db, args.min_channels):
+            print("%s,?  # mentioned by %d channels; set a topic after checking the channel" % (row["handle"], row["mentioned_by_channels"]))
+        return 0
     if args.command == "build":
         agg, report = aggregate.build(db, topic_title=args.title,
                                       eligible_topics=[t.strip() for t in args.eligible.split(",") if t.strip()] or None,
                                       max_comments_per_author=args.max_comments_per_author,
-                                      gate_threshold=args.gate_threshold, restricted=load_restricted(args.restricted))
+                                      gate_threshold=args.gate_threshold, restricted=load_restricted(args.restricted),
+                                      cpm=args.cpm or None, default_quote=args.default_quote)
         for path, payload in ((args.out, agg), (args.report, report)):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).write_text(json.dumps(payload, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")

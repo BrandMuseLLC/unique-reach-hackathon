@@ -842,7 +842,7 @@ function App() {
           </div>
         </div>
 
-        {creators.some(c => c.source === 'observed-public') && <ExploreOverlap />}
+        {creators.some(c => c.source === 'observed-public') && <ExploreOverlap aiEnabled={aiStatus.enabled} />}
 
         {result?.rosterDiagnostics && (
           <RosterOverlapPanel result={result} creators={creatorById} stale={resultIsStale} />

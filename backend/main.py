@@ -8,7 +8,7 @@ from pathlib import Path
 
 from demo.daniel_provider import RealDataProvider
 from demo.engine import PlanError
-from demo import ai
+from demo import ai, ai_labels
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
@@ -218,6 +218,17 @@ def explore_overlap(_: AuthenticatedUser = Depends(user_dependency)):
     if real_provider is None:
         return JSONResponse(status_code=404, content={'error':'Observed overlap is unavailable for this dataset.'})
     return real_provider.overlap_payload()
+
+
+@app.post('/api/overlap/labels')
+def label_overlap_clusters(_: AuthenticatedUser = Depends(user_dependency)):
+    if not canonical_ai_status()['enabled']:
+        return JSONResponse(status_code=503, content={'error': canonical_ai_status()['message']})
+    try:
+        payload = real_provider.overlap_payload()
+        return {'clusters': ai_labels.label_clusters(payload['clusters'], real_provider.planner.by_id)}
+    except PlanError as exc:
+        return JSONResponse(status_code=400, content={'error': str(exc)})
 
 
 @app.post("/api/plan")

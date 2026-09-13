@@ -2,23 +2,39 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 type Node = { id: string; name: string; sampledCommenters: number };
 type Pair = { a: string; b: string; sharedCommenters: number; jaccard: number };
-type Graph = { datasetVersion: string; nodes: Node[]; pairs: Pair[]; metric: string };
+type Cluster = { id: string; members: string[]; label: string; labelSource: 'rule' | 'model'; summary?: string;
+  topics: Record<string, number>; anchorCreators: string[]; medianInternalJaccard: number | null };
+type Graph = { datasetVersion: string; nodes: Node[]; pairs: Pair[]; metric: string; clusters?: Cluster[]; clusterMethod?: string };
 const number = (value: number) => value.toLocaleString('en-US');
 const percent = (value: number) => `${(value * 100).toFixed(2)}%`;
 
-export function ExploreOverlap() {
+export function ExploreOverlap({ aiEnabled = false }: { aiEnabled?: boolean }) {
   const [open, setOpen] = useState(false);
   return <section className="explore-panel" aria-labelledby="explore-heading">
     <div className="panel-heading">
       <div><h2 id="explore-heading">Explore overlap</h2><p>Explore observed connections between creators in the historical comment sample.</p></div>
       <button aria-expanded={open} aria-controls="explore-content" onClick={() => setOpen(!open)}>{open ? 'Close explorer' : 'Open explorer'}</button>
     </div>
-    {open && <div id="explore-content"><OverlapNetwork /></div>}
+    {open && <div id="explore-content"><OverlapNetwork aiEnabled={aiEnabled} /></div>}
   </section>;
 }
 
-function OverlapNetwork() {
+function OverlapNetwork({ aiEnabled }: { aiEnabled: boolean }) {
   const [data, setData] = useState<Graph | null>(null);
+  const [labelStatus, setLabelStatus] = useState('');
+  const [labeling, setLabeling] = useState(false);
+  async function nameClusters() {
+    setLabeling(true); setLabelStatus('');
+    try {
+      const response = await fetch('/api/overlap/labels', { method: 'POST' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? 'Cluster naming failed; rule-based labels are unchanged.');
+      setData(current => current ? { ...current, clusters: payload.clusters } : current);
+      setLabelStatus('Named from channel names and public video titles; not audience demographics.');
+    } catch (e) {
+      setLabelStatus(e instanceof Error ? e.message : 'Cluster naming failed.');
+    } finally { setLabeling(false); }
+  }
   const [error, setError] = useState('');
   const [focus, setFocus] = useState('');
   const [partner, setPartner] = useState('');
@@ -46,7 +62,24 @@ function OverlapNetwork() {
   if (error) return <p role="alert">{error}</p>;
   if (!data || !center) return <p role="status">Loading observed pair summaries…</p>;
   return <>
-    <p className="explore-note">Shared commenters are commenter IDs appearing in both sampled channels, not all viewers. Node positions are arranged for readability; proximity is not validated audience similarity. No inferred communities or demographics are shown.</p>
+    <p className="explore-note">Shared commenters are commenter IDs appearing in both sampled channels, not all viewers. Node positions are arranged for readability; proximity is not validated audience similarity. No demographics are inferred.</p>
+    {data.clusters && data.clusters.some(c => c.members.length > 1) && <section className="explore-clusters" aria-labelledby="clusters-heading">
+      <div className="explore-clusters-heading">
+        <h3 id="clusters-heading">Audience clusters</h3>
+        <button onClick={() => void nameClusters()} disabled={!aiEnabled || labeling} title={aiEnabled ? 'Name clusters with the live model' : 'Live AI is not configured'}>
+          {labeling ? 'Naming clusters…' : 'Name clusters with AI'}
+        </button>
+      </div>
+      <p className="explore-note">{data.clusterMethod}</p>
+      <ul>
+        {data.clusters.filter(c => c.members.length > 1).map(c => <li key={c.id}>
+          <strong>{c.label}</strong> <span className="explore-note">({c.members.length} channels{c.medianInternalJaccard !== null ? `, median ${percent(c.medianInternalJaccard)} Jaccard inside` : ''}{c.labelSource === 'model' ? ', AI-named' : ''})</span>
+          {c.summary && <p>{c.summary}</p>}
+          <div className="explore-cluster-members">{c.members.map(id => <button key={id} aria-pressed={id === focus} onClick={() => chooseFocus(id)}>{nodes.get(id)?.name ?? id}</button>)}</div>
+        </li>)}
+      </ul>
+      {labelStatus && <p role="status">{labelStatus}</p>}
+    </section>}
     <div className="explore-controls">
       <label>Focus creator<select value={focus} onChange={e => chooseFocus(e.target.value)}>{data.nodes.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}</select></label>
       <label>Minimum shared commenters<input type="number" min="0" step="1" value={minimum} onChange={e => setMinimum(Math.max(0, Math.floor(Number(e.target.value) || 0)))} /></label>

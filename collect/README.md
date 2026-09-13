@@ -52,6 +52,27 @@ Pattern matches such as "sponsored by X" or "use code Y at X", plus disclosure m
 They are exposed as `sponsorMentions` on `/api/creators` and passed to the AI brief interpreter, which can exclude
 creators when a brief names a competitor to avoid. This is evidence for review, not a verdict.
 
+## Grow the pool without quota
+
+```sh
+python3 -m collect suggest --min-channels 2
+```
+
+Lists @handles mentioned in collected descriptions (collabs, shout-outs) that are not yet seeded, most-mentioned
+first. Check each channel, give it a topic, append it to the seed file, then rerun `resolve`, `videos`, `comments`.
+
+## Quotes
+
+`build` models each quote at $15 CPM on median recent views, rounded to the nearest $250 with a $250 floor, the
+same rule the planner app uses. Pass `--cpm 0 --default-quote 1000` for a uniform scenario. Quotes stay editable.
+
+## Audience clusters
+
+`/api/overlap` now returns `clusters`: greedy modularity on commenter Jaccard, labeled by the dominant editorial
+topics. With live AI configured, "Name clusters with AI" in the overlap explorer asks the model to name each
+cluster from channel names and public video titles only (`POST /api/overlap/labels`). Invalid model output keeps
+the rule labels. Clusters describe overlapping sampled commenters, not demographics.
+
 ## Headline numbers
 
 ```sh
