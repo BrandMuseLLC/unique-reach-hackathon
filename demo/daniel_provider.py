@@ -194,6 +194,11 @@ class RealDataProvider:
         steps=[{'creatorId':t['id'],'creatorName':t['name'],'marginalProxyReach':round(t['marginal_gain'],2),'cost':t['cost'],
                 'reason':('%s required by the campaign; '%t['name'] if t['required'] else '%s selected; '%t['name'])+
                          'adds %.2f uncalibrated score at this step after modeled overlap.'%t['marginal_gain']} for t in plan['trace']]
+        why_not=[{'creatorId':r['id'],'creatorName':r['name'],'reason':r['reason'],'cost':ctx['costs'][r['id']],
+                  'marginalProxyReach':round(r['marginal_gain'],2),'alreadyCoveredShare':round(r['represented_fraction'],4),
+                  'overlapsWith':[{'creatorId':o['id'],'creatorName':o['name'],'sharedCommenters':round(o['shared_commenters'])} for o in r['overlaps_with']]}
+                 for r in plan['rejected'] if r['id'] in self.eligible]
+        why_not.sort(key=lambda r:(-r['alreadyCoveredShare'], r['creatorName']))
         current_summary=self.planner.summarize(current,ctx)
         baseline=plan['baselines']['top_views']
         current_flags=[self.planner.by_id[cid]['name']+': '+self._eligibility(self.planner.by_id[cid])[1] for cid in current if cid not in self.eligible]
@@ -207,7 +212,7 @@ class RealDataProvider:
                 'current':self._score(current,ctx),'recommended':self._score(plan['selected'],ctx,notes=[s['reason'] for s in steps]),
                 'viewsBaseline':self._score(baseline['selected'],ctx),
                 'rosterDiagnostics':self._diagnostics(current,plan['selected'],baseline['selected'],ctx),
-                'steps':steps,'currentFlags':current_flags,'remainingBudget':budget-plan['spend'],
+                'steps':steps,'whyNot':why_not,'currentFlags':current_flags,'remainingBudget':budget-plan['spend'],
                 'gainDecomposition':{'standaloneSizeChange':size_change,'overlapPenaltyReduction':overlap_reduction,'netScoreChange':plan['reach_est']-current_summary['reach_est'],
                                      'note':'Accounting identity on selected rosters; not causal lift. Inspect eligibility and spend differences.'},
                 'planningMethod':plan['method'],

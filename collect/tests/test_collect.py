@@ -257,3 +257,18 @@ def test_provider_clusters_and_ai_labels(collected, tmp_path, monkeypatch):
         {"cluster_id": espresso["id"], "name": "x" * 80, "summary": "too long name"}]}}]}
     with pytest.raises(PlanError):
         ai_labels.label_clusters(payload["clusters"], provider.planner.by_id, transport=bad)
+
+
+def test_plan_explains_left_out_creators(collected):
+    db, _ = collected
+    agg, _ = aggregate.build(db, topic_title="home coffee", cpm=None)
+    provider = RealDataProvider(agg)
+    crema, shots, pour = (CHANNELS[h][0] for h in ("@crema", "@shots", "@pour"))
+    plan = provider.plan_payload({"budget": 2000, "currentRoster": [crema]})
+    left_out = {row["creatorId"]: row for row in plan["whyNot"]}
+    assert set(left_out) == {crema, shots, pour} - set(plan["recommended"]["ids"])
+    for row in left_out.values():
+        assert 0 <= row["alreadyCoveredShare"] <= 1 and row["reason"]
+    if crema in left_out:  # crema's espresso audience is mostly reached through shots
+        assert left_out[crema]["overlapsWith"][0]["creatorId"] == shots
+        assert left_out[crema]["overlapsWith"][0]["sharedCommenters"] == 30

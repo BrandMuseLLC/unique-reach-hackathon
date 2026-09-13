@@ -1316,3 +1316,8 @@ dd {
   border-color: var(--brandmuse-purple);
   color: var(--brandmuse-purple);
 }
+
+.why-not-select select {
+  width: 100%;
+  margin: 8px 0 12px;
+}

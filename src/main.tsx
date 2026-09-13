@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowUpDown, BarChart3, ListFilter, Network, RefreshCw, 
 import './styles.css';
 import { ExploreOverlap } from './ExploreOverlap';
 import { SponsorConflicts, type SponsorMentions } from './SponsorConflicts';
+import { WhyNotPanel, type WhyNot } from './WhyNotPanel';
 import blackWordmark from '../brandmuse/assets/brand-muse-wordmark-black.png';
 
 type Creator = {
@@ -123,6 +124,7 @@ type PlanResult = {
     cost: number;
     reason: string;
   }>;
+  whyNot?: WhyNot[];
   currentFlags: string[];
   remainingBudget: number;
 };
@@ -890,6 +892,8 @@ function App() {
             </div>
           </section>
         )}
+
+        {result?.whyNot && <WhyNotPanel rows={result.whyNot} stale={resultIsStale} />}
       </section>
     </main>
   );
