@@ -1,20 +1,26 @@
-# Candidate seed list for the home-coffee vertical: `@handle,Topic`.
-# Handles are unverified; `resolve` reports any that do not exist. Extend to ~50 before the gate.
-# Topics are editorial groupings, not audience demographics.
+# Seed list for the home-coffee vertical: `@handle,Topic`.
+# Handles below resolved to a live YouTube channel page on 2026-09-13; `resolve` re-checks via the API.
+# Topics are editorial groupings, not audience demographics. "Retailer" marks store channels, which a
+# brand may exclude as unlikely sponsorship partners. Extend toward ~50 before trusting the gate.
 @jameshoffmann,Espresso
 @LanceHedrick,Espresso
 @Sprometheus,Espresso
 @TalesCoffee,Espresso
 @KyleRowsell,Espresso
-@wholelattelove,Espresso
-@SeattleCoffeeGear,Espresso
-@CliveCoffee,Espresso
+@BrianQuan,Espresso
+@aramse,Espresso
+@HoonsCoffee,Espresso
+@TomsCoffeeCorner,Espresso
 @morgandrinkscoffee,Latte art
-@EmilioCoffee,Latte art
-@TheCoffeeChronicler,Filter
-@coffeeadastra,Filter
-@BrewCoffeeAtHome,Filter
+@coffeechronicler,Filter
 @EuropeanCoffeeTrip,Filter
-@VirtualCoffeeHub,Gear
-@TomsCoffeeCorner,Gear
-@HoonsCoffee,Gear
+@BrewCoffeeLab,Filter
+@CoffeeCompanion,Filter
+@coffeeness,Gear
+@HomeCoffeeExpert,Gear
+@SeattleCoffeeGear,Retailer
+@CliveCoffee,Retailer
+@PrimaCoffee,Retailer
+@1stincoffee,Retailer
+@EspressoOutlet,Retailer
+@EspressoParts,Retailer

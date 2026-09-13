@@ -179,3 +179,23 @@ def test_cli_build_writes_files(collected, tmp_path, capsys):
     assert main(["--db", db_path, "build", "--out", str(out), "--report", str(report), "--restricted", str(restricted)]) == 0
     assert "gate=PASS" in capsys.readouterr().out
     assert "Bean Box" not in out.read_text()
+
+
+def test_headline_reports_both_baselines_and_split(collected, tmp_path, capsys):
+    db, _ = collected
+    agg, _ = aggregate.build(db, topic_title="home coffee")
+    path = tmp_path / "agg.json"
+    path.write_text(json.dumps(agg))
+    assert main(["headline", "--aggregate", str(path), "--budgets", "2000", "--audit-size", "2", "--out", str(tmp_path / "h.json")]) == 0
+    printed = capsys.readouterr().out
+    assert "biggest-2 roster duplicates" in printed
+    result = json.loads((tmp_path / "h.json").read_text())
+    audit = result["audit_biggest_by_subscribers"]
+    # the two biggest channels (crema, shots) share 30 commenters out of 50 + 40 memberships
+    assert audit["sum_of_individual_audiences"] == 93 and audit["sampled_commenters_reached"] == 63
+    for row in result["comparisons"]:
+        planner_reach = row["rosters"]["planner"]["reach"]
+        assert planner_reach >= row["rosters"]["top_views"]["reach"] - 1e-9
+        split = row["vs_top_views"]
+        base, plan = row["rosters"]["top_views"], row["rosters"]["planner"]
+        assert abs((plan["reach"] - base["reach"]) - (split["from_bigger_audiences"] + split["from_less_overlap"])) < 1e-6

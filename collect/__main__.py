@@ -17,7 +17,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import aggregate, youtube
+from . import aggregate, headline as headline_mod, youtube
 
 
 def load_restricted(path: str | None) -> set[str]:
@@ -45,7 +45,29 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--max-comments-per-author", type=int, default=200)
     build.add_argument("--gate-threshold", type=float, default=0.015)
     build.add_argument("--restricted", help="Newline-separated brand names to redact; keep this file outside the repo")
+    head = sub.add_parser("headline")
+    head.add_argument("--aggregate", required=True)
+    head.add_argument("--budgets", default="3000,6000,10000")
+    head.add_argument("--audit-size", type=int, default=6)
+    head.add_argument("--out")
     args = parser.parse_args(argv)
+
+    if args.command == "headline":
+        data = json.loads(Path(args.aggregate).read_text(encoding="utf-8"))
+        result = headline_mod.headline(data, [float(b) for b in args.budgets.split(",")], args.audit_size)
+        text = json.dumps(result, indent=1, ensure_ascii=False)
+        if args.out:
+            Path(args.out).write_text(text + "\n", encoding="utf-8")
+        audit = result["audit_biggest_by_subscribers"]
+        print("biggest-%d roster duplicates %.1f%% of sampled commenters" % (len(audit["roster"]), 100 * audit["duplicated_fraction"]))
+        for row in result["comparisons"]:
+            vs = row["vs_top_subscribers"], row["vs_top_views"]
+            print("$%-7g %-19s lift vs subs %6s  vs views %6s  (overlap share of gain vs views: %s)" % (
+                row["budget"], row["objective"],
+                "n/a" if vs[0]["lift"] is None else "%.1f%%" % (100 * vs[0]["lift"]),
+                "n/a" if vs[1]["lift"] is None else "%.1f%%" % (100 * vs[1]["lift"]),
+                "%.0f of %.0f" % (vs[1]["from_less_overlap"], vs[1]["from_less_overlap"] + vs[1]["from_bigger_audiences"])))
+        return 0
 
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
     db = youtube.connect(args.db)

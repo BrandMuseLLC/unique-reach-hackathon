@@ -52,6 +52,31 @@ Pattern matches such as "sponsored by X" or "use code Y at X", plus disclosure m
 They are exposed as `sponsorMentions` on `/api/creators` and passed to the AI brief interpreter, which can exclude
 creators when a brief names a competitor to avoid. This is evidence for review, not a verdict.
 
+## Headline numbers
+
+```sh
+python3 -m collect headline --aggregate data/home-coffee-aggregate.json --budgets 3000,6000,10000 --out data/headline.json
+```
+
+For each budget and both units (exact sampled commenters and the view-scaled proxy), it shows the planner's lift
+over the largest-by-subscribers and largest-by-views rosters under identical quotes, and splits the gain
+into bigger audiences versus less overlap. It also audits the biggest roster by subscribers: the share of
+sampled commenters it pays to reach twice, and what the same budget buys instead. On the bundled 34-channel
+sample this reproduces the known result (about 0.4% over the stronger baseline at $10,000), which is why
+the vertical test matters.
+
+## Sponsor conflicts in the app
+
+When the active dataset carries `sponsorMentions`, a "Sponsor conflicts" panel lists matches for brands you
+type and excludes those creators in one click, then re-plans. It works without live AI. The creator
+inspector shows each creator's mentions.
+
+## Restricted names
+
+`scripts/check-restricted-names.sh` fails if any name from `~/.config/brandmuse/restricted-names.txt`
+(or `RESTRICTED_NAMES_FILE`) appears in tracked files or unpushed commit messages. Install it as a pre-push
+hook with `ln -s ../../scripts/check-restricted-names.sh .git/hooks/pre-push`.
+
 ## Test
 
 ```sh

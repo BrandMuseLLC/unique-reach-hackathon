@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { AlertTriangle, ArrowUpDown, BarChart3, ListFilter, Network, RefreshCw, Save, Search, Sparkles, Trash2, Users, X } from 'lucide-react';
 import './styles.css';
 import { ExploreOverlap } from './ExploreOverlap';
+import { SponsorConflicts, type SponsorMentions } from './SponsorConflicts';
 import blackWordmark from '../brandmuse/assets/brand-muse-wordmark-black.png';
 
 type Creator = {
@@ -25,6 +26,7 @@ type Creator = {
   commenterCount: number;
   videoCount?: number;
   sourceUrl?: string;
+  sponsorMentions?: SponsorMentions | null;
 };
 
 type PlanningContext = { brandDescription: string; relevance: Record<string, number>; maxPerGroup: Record<string, number> };
@@ -612,7 +614,7 @@ function App() {
           <span>Describe the product and planning changes</span>
           <input aria-label="Campaign brief message" maxLength={2000} value={aiMessage}
             onChange={event => setAiMessage(event.target.value)}
-            placeholder="Science kits for curious adults. Assess topic relevance; keep my required creators and quotes." />
+            placeholder={result ? `${result.campaign.category}: describe the product, then assess topic relevance or change constraints.` : 'Describe the product and any constraints to apply.'} />
         </label>
         <button className="primary" onClick={() => void interpretBrief()} disabled={!aiStatus.enabled || aiBusy || loading || !aiMessage.trim() || creators.length === 0}>
           {aiBusy ? 'Interpreting brief…' : 'Apply brief with AI'}
@@ -629,6 +631,14 @@ function App() {
         {(planningContext.brandDescription || Object.keys(planningContext.relevance).length > 0 || Object.keys(planningContext.maxPerGroup).length > 0) &&
           <button disabled={aiBusy || loading} onClick={() => { setPlanningContext(EMPTY_CONTEXT); setAiReply(''); void runPlan({ planningContext: EMPTY_CONTEXT }); }}>Clear brief and topic adjustments</button>}
       </section>
+
+      <SponsorConflicts creators={creators} exclude={exclude} disabled={aiBusy || loading} onExclude={(ids) => {
+        const nextExclude = [...new Set([...exclude, ...ids])];
+        const nextInclude = include.filter((id) => !ids.includes(id));
+        setExclude(nextExclude);
+        setInclude(nextInclude);
+        void runPlan({ exclude: nextExclude, include: nextInclude });
+      }} />
 
       <section className="control-strip">
         <label className="budget-control">
@@ -964,6 +974,18 @@ function CreatorInspector({
           <dt>Audience note</dt>
           <dd>{creator.audienceNote}</dd>
         </div>
+        {creator.sponsorMentions && (
+          <div>
+            <dt>Sponsor mentions</dt>
+            <dd>
+              {creator.sponsorMentions.brands.length
+                ? creator.sponsorMentions.brands.map((entry) => `${entry.brand} (${entry.videos} ${entry.videos === 1 ? 'video' : 'videos'})`).join(', ')
+                : 'None found'}
+              {creator.sponsorMentions.disclosed_videos ? `; ${creator.sponsorMentions.disclosed_videos} videos carry a paid-promotion disclosure` : ''}.
+              {' '}{creator.sponsorMentions.basis}
+            </dd>
+          </div>
+        )}
         {creator.viewsBasis && (
           <div>
             <dt>Views basis</dt>
