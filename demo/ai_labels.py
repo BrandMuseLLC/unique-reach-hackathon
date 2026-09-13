@@ -5,7 +5,6 @@ identifiers. Names describe shared content themes, not audience demographics. An
 the rule-based labels.
 """
 import json
-import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -37,11 +36,7 @@ def label_clusters(clusters, creators_by_id, transport=None):
     multi = [c for c in clusters if len(c["members"]) > 1]
     if not multi:
         return clusters
-    with ai._lock:
-        if ai._last_call is not None and time.monotonic() - ai._last_call < 2:
-            raise PlanError("Wait two seconds between live model requests.")
-        ai._calls += 1
-        ai._last_call = time.monotonic()
+    ai.reserve_call()
     evidence = [{"cluster_id": c["id"], "channels": [{"name": creators_by_id[i]["name"], "topic": creators_by_id[i]["community"],
                                                       "sample_video_titles": creators_by_id[i].get("video_titles", [])[:3]}
                                                      for i in c["members"][:12]]} for c in multi]

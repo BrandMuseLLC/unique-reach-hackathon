@@ -6,7 +6,6 @@ changes the plan.
 """
 import json
 import re
-import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -61,7 +60,7 @@ def _numbers(value, out):
 
 
 def grounded(answer, facts, question):
-    allowed = _numbers(facts, set()) | _numbers(question, set())
+    allowed = _numbers(facts, set()) | _numbers(question, set()) | {float(n) for n in range(11)}  # counts like "two creators"
     for token in NUMBER.findall(answer):
         if round(float(token.replace(",", "")), 2) not in allowed:
             return False
@@ -74,11 +73,7 @@ def explain(plan, question, transport=None):
     provider, key, model = ai.configuration()
     if not ai.status()["configured"]:
         raise PlanError("Live AI is not configured on the server.")
-    with ai._lock:
-        if ai._last_call is not None and time.monotonic() - ai._last_call < 2:
-            raise PlanError("Wait two seconds between live model requests.")
-        ai._calls += 1
-        ai._last_call = time.monotonic()
+    ai.reserve_call()
     facts = evidence(plan)
     body = json.dumps({"question": question, "evidence": facts})
     if provider == "anthropic":

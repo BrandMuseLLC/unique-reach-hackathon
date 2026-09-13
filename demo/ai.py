@@ -40,6 +40,18 @@ _last_call = None
 _calls = 0
 
 
+def reserve_call():
+    """Shared rate and session-budget guard for every live model feature."""
+    global _last_call, _calls
+    with _lock:
+        if _last_call is not None and time.monotonic() - _last_call < 2:
+            raise PlanError("Wait two seconds between live model requests.")
+        if _calls >= int(os.environ.get("MUSE_LLM_MAX_CALLS", "60")):
+            raise PlanError("This server session reached its configured live model call limit.")
+        _calls += 1
+        _last_call = time.monotonic()
+
+
 def model_schema(planner):
     ids = list(planner.by_id)
     groups = sorted({c["community"] for c in planner.creators})

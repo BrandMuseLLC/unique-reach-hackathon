@@ -119,8 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     except youtube.QuotaExhausted as exc:
         print(str(exc), file=sys.stderr)
         result = {"stopped": "quota"}
+    except youtube.ApiError as exc:
+        print("%s. Progress is saved; rerun the same command to resume." % exc, file=sys.stderr)
+        result = {"stopped": "api_error", "status": exc.status, "reason": exc.reason}
     print(json.dumps({**result, "quota_units_by_key": client.units}))
-    return 0
+    return 1 if "stopped" in result else 0
 
 
 if __name__ == "__main__":

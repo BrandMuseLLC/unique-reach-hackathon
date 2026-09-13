@@ -379,3 +379,34 @@ def test_connect_migrates_older_databases(tmp_path):
     db = youtube.connect(str(path))
     assert "country" in {r[1] for r in db.execute("PRAGMA table_info(channels)")}
     assert "audio_language" in {r[1] for r in db.execute("PRAGMA table_info(videos)")}
+
+
+def test_live_features_share_the_call_budget(monkeypatch):
+    from demo.engine import PlanError
+    monkeypatch.setenv("MUSE_LLM_MAX_CALLS", "1")
+    monkeypatch.setattr(ai, "_calls", 0)
+    monkeypatch.setattr(ai, "_last_call", None)
+    ai.reserve_call()
+    monkeypatch.setattr(ai, "_last_call", None)
+    with pytest.raises(PlanError, match="call limit"):
+        ai.reserve_call()
+
+
+def test_small_counts_do_not_block_grounded_answers():
+    from demo import ai_explain
+    assert ai_explain.grounded("The top 2 picks already cover it.", {"score": 1234.5}, "why?")
+    assert not ai_explain.grounded("It adds 5,000 viewers.", {"score": 1234.5}, "why?")
+
+
+def test_cli_stops_cleanly_on_api_error(tmp_path, monkeypatch, capsys):
+    class Broken(FakeYouTube):
+        def __call__(self, url):
+            return 400, {"error": {"errors": [{"reason": "badRequest"}]}}
+    monkeypatch.setenv("YOUTUBE_API_KEYS", "k1")
+    seeds = tmp_path / "seeds.csv"
+    seeds.write_text("@crema,Espresso\n")
+    import collect.__main__ as cli
+    real_client = youtube.Client
+    monkeypatch.setattr(cli.youtube, "Client", lambda keys: real_client(keys, transport=Broken(), sleep=lambda _: None))
+    assert cli.main(["--db", str(tmp_path / "x.sqlite"), "resolve", "--seeds", str(seeds)]) == 1
+    assert "rerun the same command to resume" in capsys.readouterr().err
