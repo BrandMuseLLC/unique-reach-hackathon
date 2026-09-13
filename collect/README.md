@@ -81,6 +81,22 @@ shows it without AI. With live AI configured, "Ask AI" (`POST /api/explain`) ans
 that evidence only; the server recomputes the plan from the inputs and withholds any answer that cites a number
 not present in the evidence.
 
+## Validation
+
+`build` reports `temporal_stability`: each channel's collected videos are split into older and newer halves, and the
+rank correlation of pairwise commenter Jaccard between halves is reported (needs 3+ channels with 2+ commented videos).
+It shows the signal is stable, not that commenters stand in for viewers.
+
+When an overlap-tool trial is available, export 20-30 channel pairs spanning low to high overlap into a CSV with columns
+`a,b,overlap` (handles, channel IDs or channel titles; `overlap` may end in `%`). Start from
+`collect/seeds/benchmark-template.csv`, then:
+
+```sh
+python3 -m collect validate --aggregate data/home-coffee-aggregate.json --benchmark data/benchmark.csv --out data/validation.json
+```
+
+It prints matched pairs, unmatched rows and the Spearman correlation with our commenter Jaccard. Report n with rho.
+
 ## Headline numbers
 
 ```sh

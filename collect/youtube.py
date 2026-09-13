@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS videos (
 CREATE TABLE IF NOT EXISTS authors (
     channel_id TEXT NOT NULL, author_key TEXT NOT NULL, comments INTEGER NOT NULL,
     PRIMARY KEY (channel_id, author_key));
+CREATE TABLE IF NOT EXISTS video_authors (
+    video_id TEXT NOT NULL, author_key TEXT NOT NULL, PRIMARY KEY (video_id, author_key));
 CREATE TABLE IF NOT EXISTS failures (subject TEXT PRIMARY KEY, reason TEXT NOT NULL);
 """
 
@@ -216,9 +218,11 @@ def collect_comments(db: sqlite3.Connection, client: Client, max_per_video: int 
                 author = (snippet.get("authorChannelId") or {}).get("value")
                 if not author or author == channel_id:
                     continue  # anonymous rows and the creator's own comments are not audience evidence
+                key = author_key(db, author)
                 db.execute(
                     "INSERT INTO authors VALUES (?,?,1) ON CONFLICT(channel_id, author_key) DO UPDATE SET comments=comments+1",
-                    (channel_id, author_key(db, author)))
+                    (channel_id, key))
+                db.execute("INSERT OR IGNORE INTO video_authors VALUES (?,?)", (video["video_id"], key))
                 collected += 1
             token = body.get("nextPageToken")
             db.execute("UPDATE videos SET next_page_token=?, collected=? WHERE video_id=?", (token, collected, video["video_id"]))

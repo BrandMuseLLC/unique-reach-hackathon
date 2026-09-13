@@ -17,7 +17,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import aggregate, headline as headline_mod, youtube
+from . import aggregate, headline as headline_mod, validation, youtube
 
 
 def load_restricted(path: str | None) -> set[str]:
@@ -49,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--restricted", help="Newline-separated brand names to redact; keep this file outside the repo")
     suggest = sub.add_parser("suggest", help="List @handles mentioned in collected descriptions (no quota)")
     suggest.add_argument("--min-channels", type=int, default=2)
+    validate = sub.add_parser("validate", help="Correlate commenter Jaccard with an external overlap CSV (a,b,overlap)")
+    validate.add_argument("--aggregate", required=True)
+    validate.add_argument("--benchmark", required=True)
+    validate.add_argument("--out")
     head = sub.add_parser("headline")
     head.add_argument("--aggregate", required=True)
     head.add_argument("--budgets", default="3000,6000,10000")
@@ -56,6 +60,14 @@ def main(argv: list[str] | None = None) -> int:
     head.add_argument("--out")
     args = parser.parse_args(argv)
 
+    if args.command == "validate":
+        data = json.loads(Path(args.aggregate).read_text(encoding="utf-8"))
+        result = validation.benchmark(data, validation.read_benchmark_csv(args.benchmark))
+        if args.out:
+            Path(args.out).write_text(json.dumps(result, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+        rho = result["spearman"]
+        print("matched=%d unmatched=%d spearman=%s" % (result["matched_pairs"], len(result["unmatched"]), "n/a" if rho is None else "%.3f" % rho))
+        return 0
     if args.command == "headline":
         data = json.loads(Path(args.aggregate).read_text(encoding="utf-8"))
         result = headline_mod.headline(data, [float(b) for b in args.budgets.split(",")], args.audit_size)
@@ -89,9 +101,11 @@ def main(argv: list[str] | None = None) -> int:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).write_text(json.dumps(payload, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         gate = report["gate"]
-        print("channels=%d commenters=%d multi-channel=%d median-jaccard=%.4f gate=%s" % (
+        stability = report["temporal_stability"]
+        print("channels=%d commenters=%d multi-channel=%d median-jaccard=%.4f gate=%s stability=%s" % (
             report["channels"], report["unique_commenters"], report["multi_channel_commenters"],
-            gate["median_pair_jaccard"], "PASS" if gate["pass"] else "FAIL"))
+            gate["median_pair_jaccard"], "PASS" if gate["pass"] else "FAIL",
+            "%.3f" % stability["spearman"] if stability.get("spearman") is not None else "n/a"))
         return 0
 
     client = youtube.Client(os.environ.get("YOUTUBE_API_KEYS", "").split(","))

@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from itertools import combinations
 import math
 
+from . import validation
+
 SPONSOR_PATTERNS = [
     ("sponsor", re.compile(r"\b(?:sponsored by|thanks to|thank you to|brought to you by|in partnership with|partnered with)\s+"
                            r"([A-Z][\w&'+-]*(?:\s+[A-Z][\w&'+-]*){0,2})")),
@@ -205,6 +207,7 @@ def build(db: sqlite3.Connection, *, topic_title: str, eligible_topics: list[str
         "commenter_to_view_outliers": [{"creator": names[cid], "ratio_vs_median": r / ratio_median}
                                        for cid, r in sorted(ratios.items(), key=lambda kv: -kv[1])
                                        if ratio_median and (r / ratio_median > 4 or r / ratio_median < 0.25)],
+        "temporal_stability": validation.temporal_stability(db, kept),
         "sponsor_brands": sorted({b["brand"] for c in creators for b in c["sponsor_mentions"]["brands"]}),
         "caveats": ["Commenters are a selected subset of viewers; overlap is sampled commenter overlap, not unique viewers.",
                     "High-volume author filtering is a spam heuristic, not bot detection.",

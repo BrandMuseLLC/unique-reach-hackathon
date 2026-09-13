@@ -297,3 +297,38 @@ def test_explanations_are_grounded_in_plan_numbers(collected, monkeypatch):
     monkeypatch.setattr(ai, "_last_call", None)
     with pytest.raises(PlanError, match="not in the plan evidence"):
         ai_explain.explain(plan, "why not them?", transport=reply("It would reach 987,654 more viewers."))
+
+
+def test_spearman_handles_ties_and_direction():
+    from collect.validation import spearman
+    assert spearman([1, 2, 3, 4], [10, 20, 30, 40]) == pytest.approx(1.0)
+    assert spearman([1, 2, 3, 4], [4, 3, 2, 1]) == pytest.approx(-1.0)
+    assert spearman([1, 1, 2, 3], [5, 5, 6, 7]) == pytest.approx(1.0)
+    assert spearman([1, 2], [1, 2]) is None
+
+
+def test_build_reports_temporal_stability(collected, tmp_path):
+    db, _ = collected
+    _, report = aggregate.build(db, topic_title="home coffee")
+    assert report["temporal_stability"]["status"] == "unavailable"  # one channel has a single video with comments
+
+    full = youtube.connect(str(tmp_path / "full.sqlite"))
+    client = youtube.Client(["k1"], transport=FakeYouTube(), sleep=lambda _: None)
+    youtube.resolve_channels(full, client, [("@crema", "Espresso"), ("@shots", "Espresso"), ("@pour", "Filter")])
+    youtube.list_videos(full, client, per_channel=2)
+    youtube.collect_comments(full, client)
+    _, report = aggregate.build(full, topic_title="home coffee")
+    stability = report["temporal_stability"]
+    assert stability["status"] == "computed" and stability["pairs"] == 3
+    assert stability["spearman"] == pytest.approx(1.0)  # the fixture's audiences are identical across halves
+
+
+def test_benchmark_matches_handles_names_and_ids(collected, tmp_path, capsys):
+    db, _ = collected
+    agg, _ = aggregate.build(db, topic_title="home coffee")
+    path = tmp_path / "agg.json"
+    path.write_text(json.dumps(agg))
+    bench = tmp_path / "bench.csv"
+    bench.write_text("a,b,overlap\n@crema,@shots,41%%\nCrema Lab,Pour Journal,6\n%s,@pour,1.5\n@crema,@unknown,9\n" % CHANNELS["@shots"][0])
+    assert main(["validate", "--aggregate", str(path), "--benchmark", str(bench), "--out", str(tmp_path / "v.json")]) == 0
+    assert "matched=3 unmatched=1 spearman=1.000" in capsys.readouterr().out
