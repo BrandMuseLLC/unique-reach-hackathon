@@ -1,0 +1,18 @@
+substitutions:
+  _REGION: us-east1
+  _REPOSITORY: unique-reach
+  _SERVICE: unique-reach-demo
+  _IMAGE_TAG: manual
+  _DOCKERFILE: Dockerfile
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - ${_DOCKERFILE}
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:${_IMAGE_TAG}
+      - .
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:${_IMAGE_TAG}

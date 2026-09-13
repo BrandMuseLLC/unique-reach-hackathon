@@ -1,0 +1,20 @@
+:root {
+  --brandmuse-font-sans: "Plus Jakarta Sans", Inter, system-ui, sans-serif;
+
+  --brandmuse-purple: #8b5cf6;
+  --brandmuse-purple-light: #a78bfa;
+  --brandmuse-purple-dark: #7c3aed;
+
+  --brandmuse-light-background: #f2f3f5;
+  --brandmuse-light-surface: #ffffff;
+  --brandmuse-light-border: #d6d9df;
+  --brandmuse-light-text: #111827;
+  --brandmuse-light-muted-text: #5b6472;
+
+  --brandmuse-dark-background: #0a0a0f;
+  --brandmuse-dark-surface: #0f0f18;
+  --brandmuse-dark-raised-surface: #1a1a24;
+  --brandmuse-dark-border: #1f1f2e;
+  --brandmuse-dark-text: #ffffff;
+  --brandmuse-dark-muted-text: #d1d5db;
+}
