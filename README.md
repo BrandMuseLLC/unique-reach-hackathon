@@ -29,7 +29,7 @@ Alternatively:
 
 ```sh
 docker build -t unique-reach-demo .
-docker run --rm -p 127.0.0.1:8033:8080 unique-reach-demo
+docker run --rm -e AUTH_MODE=local -e CAMPAIGN_STORE=local -p 127.0.0.1:8033:8080 unique-reach-demo
 ```
 
 This is a first-milestone source submission, not a hosted service. Sponsored Google hosting is in progress.

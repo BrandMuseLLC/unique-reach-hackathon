@@ -5,7 +5,7 @@ import { ExploreOverlap } from './ExploreOverlap';
 import { WhyNotPanel, type WhyNot } from './WhyNotPanel';
 import whiteWordmark from '../brandmuse/assets/brand-muse-wordmark-white.jpg';
 
-type Creator = { id: string; name: string; category: string; estimatedViews: number; baseCost: number; eligibilityStatus: string;
+type Creator = { source?: 'synthetic' | 'observed-public'; id: string; name: string; category: string; estimatedViews: number; baseCost: number; eligibilityStatus: string;
   sponsorMentions?: { brands: { brand: string }[] } | null; creatorCountry?: string | null; foundBy?: 'upriver' | 'youtube_search' };
 type Lookalike = { creatorId?: string; name: string; platform: string; handle?: string; url?: string; followers?: number | null; followerBucket?: string | null; score: number | null; otherChannels: { platform: string; handle?: string }[] };
 type LookalikeGroup = { anchorId: string; anchorName: string; results: Lookalike[]; incomplete: boolean; cached: boolean };
@@ -22,6 +22,7 @@ type Plan = {
 };
 type Context = { brandDescription: string; relevance: Record<string, number>; maxPerGroup: Record<string, number>; creatorCount?: number };
 type Inputs = { budget: number; currentRoster: string[]; include: string[]; exclude: string[]; costs: Record<string, number>; planningContext: Context };
+type SavedCampaign = Inputs & { id: string; name: string; datasetVersion: string };
 type Dataset = { id: string; name: string; prompt?: string | null; dataDate?: string | null; active: boolean };
 type Job = { id: string; status: 'running' | 'done' | 'error'; step: string; progress: number; message: string; dataset_id: string | null; error: string | null; units: number };
 type Evidence = { medianSampledCommenters: number; eligibleCreators: number; thinCreators: number; strength: 'strong' | 'moderate' | 'thin' };
@@ -51,6 +52,12 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export function Studio() {
+  const [saved, setSaved] = useState<SavedCampaign[]>([]);
+  const [saveName, setSaveName] = useState('Demo campaign');
+  const [saveStatus, setSaveStatus] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [datasetVersion, setDatasetVersion] = useState('');
+  const [datasetLabel, setDatasetLabel] = useState('');
   const [creators, setCreators] = useState<Creator[]>([]);
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [inputs, setInputs] = useState<Inputs>({ budget: 10000, currentRoster: [], include: [], exclude: [], costs: {}, planningContext: EMPTY });
@@ -119,7 +126,12 @@ export function Studio() {
   async function loadDataset() {
     setError('');
     try {
-      const payload = await api<{ campaign: Campaign; creators: Creator[]; defaultBudget?: number; defaultCurrentRoster?: string[]; evidence?: Evidence; defaultRosterBasis?: string }>('/api/creators');
+      const payload = await api<{ campaign: Campaign; creators: Creator[]; datasetVersion: string; datasetLabel?: string; defaultBudget?: number; defaultCurrentRoster?: string[]; evidence?: Evidence; defaultRosterBasis?: string }>('/api/creators');
+      setDatasetVersion(payload.datasetVersion);
+      setDatasetLabel(payload.datasetLabel ?? 'Sampled commenter evidence; not validated unique viewers.');
+      setSaveName(`${payload.campaign.name} plan`.slice(0, 80));
+      setSaveStatus('');
+      void api<{ campaigns: SavedCampaign[] }>('/api/campaigns').then(p => setSaved(p.campaigns)).catch(() => setSaveStatus('Saved campaigns unavailable.'));
       setEvidence(payload.evidence ?? null);
       setRosterBasis(payload.defaultRosterBasis ?? '');
       setDelta(null);
@@ -128,7 +140,7 @@ export function Studio() {
       skipAuto.current = true;
       setCreators(payload.creators);
       setCampaign(payload.campaign);
-      const next: Inputs = { budget: payload.defaultBudget ?? 10000, currentRoster: payload.defaultCurrentRoster ?? [], include: [], exclude: [],
+      const next: Inputs = { budget: payload.defaultBudget ?? (payload.creators.every(c => c.source === 'synthetic') ? 139000 : 10000), currentRoster: payload.defaultCurrentRoster ?? [], include: [], exclude: [],
         costs: Object.fromEntries(payload.creators.map((c) => [c.id, c.baseCost])), planningContext: EMPTY };
       setInputs(next);
       setOpenRow('');
@@ -138,6 +150,31 @@ export function Studio() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load creators.');
     }
+  }
+
+  async function saveCurrentCampaign() {
+    setSaving(true);
+    try {
+      await api('/api/campaigns', { name: saveName.trim(), ...inputsRef.current });
+      const result = await api<{ campaigns: SavedCampaign[] }>('/api/campaigns');
+      setSaved(result.campaigns);
+      setSaveStatus('Campaign saved.');
+    } catch (e) { setSaveStatus(e instanceof Error ? e.message : 'Save failed.'); }
+    finally { setSaving(false); }
+  }
+
+  async function restoreCampaign(id: string) {
+    const row = saved.find(c => c.id === id && c.datasetVersion === datasetVersion);
+    if (!row) return;
+    const next: Inputs = { budget: row.budget, currentRoster: row.currentRoster, include: row.include,
+      exclude: row.exclude, costs: row.costs, planningContext: row.planningContext ?? EMPTY };
+    ++requestId.current;
+    skipAuto.current = true;
+    inputsRef.current = next;
+    setInputs(next);
+    setSaveName(row.name);
+    setSaveStatus('Campaign loaded.');
+    await runPlan(next);
   }
 
   function recordDelta(before: Plan | null, beforeInputs: Inputs | null, after: Plan, afterInputs: Inputs) {
@@ -320,7 +357,7 @@ export function Studio() {
             ))}
           </div>
         )}
-        <p className="side-foot">Overlap is measured from public commenters on recent videos. Counts are commenter accounts, not unique viewers.</p>
+        <p className="side-foot">Overlap is measured from sampled commenter accounts; this demo's data source is shown with the campaign. Counts are commenter accounts, not unique viewers.</p>
       </aside>
 
       <main className="stage">
@@ -375,14 +412,24 @@ export function Studio() {
             <label className="strip-item">
               <span>Creators</span>
               <div className="count-step">
-                <button type="button" aria-label="Fewer creators" onClick={() => update({ planningContext: { ...inputs.planningContext, creatorCount: Math.max((inputs.planningContext.creatorCount ?? 0) - 1, 0) } })}>−</button>
+                <button type="button" aria-label="Fewer creators" disabled={creators.every(c => c.source === 'synthetic')} onClick={() => update({ planningContext: { ...inputs.planningContext, creatorCount: Math.max((inputs.planningContext.creatorCount ?? 0) - 1, 0) } })}>−</button>
                 <b>{inputs.planningContext.creatorCount ? inputs.planningContext.creatorCount : 'Any'}</b>
-                <button type="button" aria-label="More creators" onClick={() => update({ planningContext: { ...inputs.planningContext, creatorCount: Math.min((inputs.planningContext.creatorCount ?? 0) + 1, Math.max(eligible.length, 1)) } })}>+</button>
+                <button type="button" aria-label="More creators" disabled={creators.every(c => c.source === 'synthetic')} onClick={() => update({ planningContext: { ...inputs.planningContext, creatorCount: Math.min((inputs.planningContext.creatorCount ?? 0) + 1, Math.max(eligible.length, 1)) } })}>+</button>
               </div>
             </label>
             <div className={`live-pill ${loading || stale ? 'busy' : ''}`} aria-live="polite">
               {loading || stale ? <Loader2 className="spin" size={14} /> : <BarChart3 size={14} />}{loading || stale ? 'Updating plan…' : 'Plan is up to date'}
             </div>
+          </div>
+          <p className="hero-note">{datasetLabel}</p>
+          <div className="campaign-strip" aria-label="Saved campaigns">
+            <label className="strip-item grow"><span>Campaign name</span><input aria-label="Campaign name" maxLength={80} value={saveName} onChange={e => setSaveName(e.target.value)} /></label>
+            <button className="btn-secondary" disabled={saving || loading || chatBusy || !saveName.trim()} onClick={() => void saveCurrentCampaign()}>Save campaign</button>
+            <label className="strip-item"><span>Load campaign</span><select aria-label="Load campaign" value="" disabled={loading || chatBusy} onChange={e => void restoreCampaign(e.target.value)}>
+              <option value="">Choose a saved campaign</option>
+              {saved.filter(c => c.datasetVersion === datasetVersion).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select></label>
+            <p role="status">{saveStatus}</p>
           </div>
           {error && <p className="alert" role="alert">{error}</p>}
           {plan?.countNote && !stale && <p className="notice">{plan.countNote}</p>}
@@ -483,7 +530,7 @@ export function Studio() {
         </section>
 
         <section id="map" className={`stage-section ${flash === 'map' ? 'flash' : ''}`}>
-          {creators.length > 0 && <ExploreOverlap key={campaign?.id} aiEnabled={aiEnabled} />}
+          {creators.some(c => c.source === 'observed-public') && <ExploreOverlap key={campaign?.id} aiEnabled={aiEnabled} />}
         </section>
 
         <section id="platforms" className={`stage-section panel-lite ${flash === 'platforms' ? 'flash' : ''}`}>

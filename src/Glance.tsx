@@ -215,9 +215,9 @@ export function Glance({ result, creatorCount }: { result: GlanceInput; creatorC
   const scale = Math.max(rec.sharedRate, cur.sharedRate, 0.001) * 1.15;
   const points = (value: number) => (value * 100).toFixed(1);
   const sentence = cur.ids.length === 0
-    ? `The recommended roster repeats ${points(rec.sharedRate)}% of its commenters. Tick creators below to compare your own roster.`
+    ? `The recommended roster has ${points(rec.sharedRate)}% repeated commenter memberships. Tick creators below to compare your own roster.`
     : rec.sharedRate < cur.sharedRate - 0.0005
-      ? `The recommended roster cuts repeated commenters from ${points(cur.sharedRate)}% to ${points(rec.sharedRate)}%, so less of the budget reaches the same people twice.`
+      ? `The recommended roster reduces repeated commenter memberships from ${points(cur.sharedRate)}% to ${points(rec.sharedRate)}% within this sample.`
       : rec.sharedRate > cur.sharedRate + 0.0005
         ? `Your roster overlaps less (${points(cur.sharedRate)}% vs ${points(rec.sharedRate)}%)${rec.coverage > cur.coverage ? ', but the recommended roster reaches more commenters overall' : ''}.`
         : `Your roster and the recommended roster overlap about the same (${points(rec.sharedRate)}%).`;
@@ -239,11 +239,11 @@ export function Glance({ result, creatorCount }: { result: GlanceInput; creatorC
         <div className="hero-bars" aria-hidden="true">
           <div className="hb"><em>Recommended</em><div className="hb-track"><i className="grow-x plan" style={{ width: `${(rec.sharedRate / scale) * 100}%` }} /></div></div>
           <div className="hb"><em>Your roster</em><div className="hb-track"><i className="grow-x mine" style={{ width: `${(cur.sharedRate / scale) * 100}%`, animationDelay: '120ms' }} /></div></div>
-          <small>Share of commenters who also comment on another creator in the same roster</small>
+          <small>Repeated memberships ÷ total commenter memberships across the roster</small>
         </div>
       </div>
       <div className="support">
-        <Support label="Commenters reached" mine={compact(mine.reached)} plan={compact(reached)} better={rec.coverage > cur.coverage ? 'plan' : rec.coverage < cur.coverage ? 'mine' : 'tie'} />
+        <Support label="Commenter accounts covered" mine={compact(mine.reached)} plan={compact(reached)} better={rec.coverage > cur.coverage ? 'plan' : rec.coverage < cur.coverage ? 'mine' : 'tie'} />
         <Support label="Spend" mine={money(mine.spent)} plan={money(spent)} note={`of ${money(result.budget)}`} />
         <Support label="Creators" mine={String(Math.round(mine.count))} plan={String(Math.round(count))} note={`from ${creatorCount}`} />
       </div>
