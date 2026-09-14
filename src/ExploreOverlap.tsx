@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 type Node = { id: string; name: string; sampledCommenters: number };
-type Pair = { a: string; b: string; sharedCommenters: number; jaccard: number };
+type Pair = { a: string; b: string; sharedCommenters: number; jaccard: number; source?: 'measured' | 'estimated' | 'assumed' };
 type Cluster = { id: string; members: string[]; label: string; labelSource: 'rule' | 'model'; summary?: string;
   topics: Record<string, number>; anchorCreators: string[]; medianInternalJaccard: number | null };
-type Graph = { datasetVersion: string; nodes: Node[]; pairs: Pair[]; metric: string; clusters?: Cluster[] };
+type Graph = { datasetVersion: string; nodes: Node[]; pairs: Pair[]; metric: string; clusters?: Cluster[]; unit?: string };
 
 const whole = (value: number) => Math.round(value).toLocaleString('en-US');
 
@@ -38,7 +38,7 @@ export function ExploreOverlap({ aiEnabled = false }: { aiEnabled?: boolean }) {
       .filter((p) => (p.a === focus || p.b === focus) && p.sharedCommenters > 0)
       .map((p) => {
         const other = nodes.get(p.a === focus ? p.b : p.a)!;
-        return { other, shared: p.sharedCommenters, share: center.sampledCommenters ? p.sharedCommenters / center.sampledCommenters : 0 };
+        return { other, shared: p.sharedCommenters, source: p.source, share: center.sampledCommenters ? p.sharedCommenters / center.sampledCommenters : 0 };
       })
       .sort((x, y) => y.share - x.share)
       .slice(0, 8);
@@ -84,7 +84,9 @@ export function ExploreOverlap({ aiEnabled = false }: { aiEnabled?: boolean }) {
               </select>
             </label>
             <p className="aud-lead">
-              Of <strong>{whole(center.sampledCommenters)}</strong> people we saw commenting on <strong>{center.name}</strong>, this share also comment on:
+              {data.unit === 'estimated_followers'
+                ? <>Of about <strong>{whole(center.sampledCommenters)}</strong> followers of <strong>{center.name}</strong>, this share also follow:</>
+                : <>Of <strong>{whole(center.sampledCommenters)}</strong> people we saw commenting on <strong>{center.name}</strong>, this share also comment on:</>}
             </p>
             {neighbours.length === 0 ? (
               <p className="placeholder small">No shared commenters with the other creators in this search. Their audiences look separate in our sample.</p>
@@ -94,12 +96,14 @@ export function ExploreOverlap({ aiEnabled = false }: { aiEnabled?: boolean }) {
                   <li key={n.other.id}>
                     <button className="aud-name" onClick={() => setFocus(n.other.id)} title={`Show ${n.other.name}`}>{n.other.name}</button>
                     <div className="aud-track"><i className="grow-x" style={{ width: `${Math.max((n.share / maxShare) * 100, 3)}%`, animationDelay: `${i * 60}ms` }} /></div>
-                    <span className="aud-value"><strong>{(n.share * 100).toFixed(n.share < 0.1 ? 1 : 0)}%</strong> <small>{whole(n.shared)} people</small></span>
+                    <span className="aud-value"><strong>{(n.share * 100).toFixed(n.share < 0.1 ? 1 : 0)}%</strong> <small>{n.source && n.source !== 'measured' ? `${n.source}` : `${whole(n.shared)} people`}</small></span>
                   </li>
                 ))}
               </ul>
             )}
-            <p className="aud-foot">Higher % means more of the same fans, so pairing those two creators reaches fewer new people. Based on a sample of public commenters, not all viewers.</p>
+            <p className="aud-foot">Higher % means more of the same fans, so pairing those two creators reaches fewer new people. {data.unit === 'estimated_followers'
+              ? 'YouTube pairs are measured from shared commenters; pairs with Instagram or TikTok are estimated from audience profiles (see How estimates work).'
+              : 'Based on a sample of public commenters, not all viewers.'}</p>
           </div>
 
           <div className="aud-card">

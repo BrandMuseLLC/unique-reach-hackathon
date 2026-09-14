@@ -9,9 +9,11 @@ import json
 from pathlib import Path
 
 if __package__:
+    from . import choice
     from . import clusters as cluster_mod
     from .engine import Planner, PlanError
 else:
+    import choice
     import clusters as cluster_mod
     from engine import Planner, PlanError
 
@@ -148,6 +150,13 @@ class RealDataProvider:
                 best=roster
         return best
 
+    def _choice(self, current, plan, ctx):
+        mine=self._roster_diagnostic(current,ctx)
+        rec=self._roster_diagnostic(plan['selected'],ctx)
+        return choice.explain(mine, rec, unit='commenters', current_ids=current,
+                              feasible_reason=choice.infeasible_reason(current, ctx, self.planner.by_id),
+                              creator_count=ctx.get('creator_count',0))
+
     def _count_gap(self, ctx, plan):
         """Plain-language reasons a creator-count target was missed, plus the budget that would fit the reachable count."""
         target=ctx.get('creator_count',0)
@@ -188,7 +197,7 @@ class RealDataProvider:
 
     def _ids(self, value, field):
         if not isinstance(value,list) or any(not isinstance(cid,str) or cid not in self.planner.by_id for cid in value):
-            raise PlanError('%s must be a list of known IDs from /api/creators; synthetic IDs are not mapped to real creators.'%field)
+            raise PlanError('Some creators in %s aren\'t in the active search (it may have changed in another tab). Refresh the page.'%field)
         return list(dict.fromkeys(value))
 
     def _score(self, ids, ctx, *, notes=()):
@@ -329,4 +338,5 @@ class RealDataProvider:
                                      'note':'Accounting identity on selected rosters; not causal lift. Inspect eligibility and spend differences.'},
                 'planningMethod':plan['method'],
                 'comparisonPolicy':'Recommendation and view-ranked baseline share budget, required creators, exclusions, eligible topics, quotes, topic caps and relevance weights.',
+                'choice':self._choice(current,plan,ctx),
                 'provenance':self.public_provenance()}

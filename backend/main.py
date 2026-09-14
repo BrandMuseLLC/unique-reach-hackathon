@@ -9,7 +9,7 @@ from pathlib import Path
 
 from demo.daniel_provider import RealDataProvider
 from demo.engine import PlanError
-from demo import ai, ai_explain, ai_labels, assistant, discovery, upriver
+from demo import ai, ai_explain, ai_labels, assistant, audience_match, crossplatform, discovery, upriver
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,7 +23,8 @@ from .snapshots import create_snapshot_writer
 
 
 settings = auth_settings()
-real_provider = RealDataProvider.from_env(os.environ) if os.environ.get("MUSE_DATASET") == "observed" else None
+real_provider = (crossplatform.load_provider(json.loads(Path(os.environ["MUSE_OBSERVED_DATA"]).read_text())) if os.environ.get("MUSE_OBSERVED_DATA")
+                 else RealDataProvider.bundled()) if os.environ.get("MUSE_DATASET") == "observed" else None
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 
@@ -111,6 +112,20 @@ class CampaignInput(BaseModel):
     campaignBrief: dict[str, object] | None = None
     datasetVersion: str | None = None
     sharedDemo: bool = True
+
+
+DATASET_BOUND = ("/api/plan", "/api/assistant", "/api/explain", "/api/campaigns", "/api/upriver/similar", "/api/upriver/audience-match")
+
+
+@app.middleware("http")
+async def reject_stale_dataset(request: Request, call_next):
+    # The active dataset is server-wide; a page (or another tab) still showing the previous search would send its
+    # creator IDs to the new one. Tell it to reload instead of failing with an unknown-ID error.
+    sent = request.headers.get("x-dataset-version")
+    if sent and request.method == "POST" and request.url.path in DATASET_BOUND and sent != active_dataset_version():
+        return JSONResponse(status_code=409, content={"code": "dataset_changed",
+                                                      "error": "The active search changed (another tab or a new search), so this page reloaded it."})
+    return await call_next(request)
 
 
 @app.exception_handler(AuthError)
@@ -280,6 +295,19 @@ class DiscoverRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     prompt: str = Field(min_length=3, max_length=300)
     expandWithUpriver: bool = False
+    crossPlatform: bool = False
+
+
+class ProfileRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    url: str = Field(min_length=10, max_length=300, pattern=r'^https://(www\.)?(instagram\.com|tiktok\.com|youtube\.com)/')
+    name: str = Field(default='', max_length=120)
+
+
+class AudienceMatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    profiles: list[ProfileRef] = Field(default_factory=list, max_length=8)
+    planCreatorIds: list[str] = Field(default_factory=list, max_length=3)
 
 
 class SimilarRequest(BaseModel):
@@ -317,7 +345,7 @@ def activate_dataset(request: ActivateRequest, _: AuthenticatedUser = Depends(us
     if path is None:
         return JSONResponse(status_code=404, content={'error': 'Unknown dataset.'})
     try:
-        real_provider = RealDataProvider(json.loads(path.read_text()))
+        real_provider = crossplatform.load_provider(json.loads(path.read_text()))
     except (PlanError, OSError, ValueError) as exc:
         return JSONResponse(status_code=400, content={'error': 'Could not load that dataset: %s' % exc})
     active_dataset_id = request.id
@@ -337,10 +365,10 @@ def start_discovery(request: DiscoverRequest, _: AuthenticatedUser = Depends(use
     if not canonical_ai_status()['enabled']:
         return JSONResponse(status_code=503, content={'error': 'Creator search needs live AI to be configured.'})
     try:
-        if request.expandWithUpriver and not upriver.status()['configured']:
+        if (request.expandWithUpriver or request.crossPlatform) and not upriver.status()['configured']:
             raise PlanError('Add UPRIVER_API_KEY to the server .env to use Upriver lookalikes.')
         job_id = discovery.start(request.prompt, os.environ.get('YOUTUBE_API_KEYS', '').split(','), restricted_names(),
-                                 expand_with_upriver=request.expandWithUpriver)
+                                 expand_with_upriver=request.expandWithUpriver, cross_platform=request.crossPlatform)
     except PlanError as exc:
         return JSONResponse(status_code=400, content={'error': str(exc)})
     return {'job': discovery.status(job_id)}
@@ -349,6 +377,42 @@ def start_discovery(request: DiscoverRequest, _: AuthenticatedUser = Depends(use
 @app.get('/api/upriver/status')
 def upriver_status(_: AuthenticatedUser = Depends(user_dependency)):
     return upriver.status()
+
+
+@app.post('/api/upriver/audience-match')
+def upriver_audience_match(request: AudienceMatchRequest, _: AuthenticatedUser = Depends(user_dependency)):
+    refs = [{'url': p.url, 'name': p.name, 'source': 'lookalike'} for p in request.profiles]
+    for cid in request.planCreatorIds:
+        creator = real_provider.planner.by_id.get(cid) if real_provider is not None else None
+        url = (creator or {}).get('url') or ('https://www.youtube.com/channel/%s' % cid if creator and cid.startswith('UC') else None)
+        if url:
+            refs.append({'url': url, 'name': creator['name'], 'source': 'plan'})
+    refs = list({r['url']: r for r in refs}.values())
+    if len(refs) < 2:
+        return JSONResponse(status_code=400, content={'error': 'Pick at least two creators to compare.'})
+    profiles, charged, stopped = [], 0, None
+    for ref in refs:
+        try:
+            result = upriver.audience(ref['url'])
+        except PlanError as exc:
+            stopped = str(exc)
+            break
+        charged += result['creditsCharged']
+        normalized = audience_match.profile(result['audience'])
+        profiles.append({'url': ref['url'], 'name': ref['name'] or result.get('name') or ref['url'], 'source': ref['source'],
+                         'platform': result.get('platform') or ('youtube' if 'youtube.com' in ref['url'] else ''),
+                         'summary': audience_match.summary(normalized), 'hasData': normalized is not None, '_p': normalized})
+    pairs = []
+    for i, a in enumerate(profiles):
+        for b in profiles[i + 1:]:
+            scored = audience_match.match(a['_p'], b['_p'])
+            if scored:
+                pairs.append({'a': a['url'], 'b': b['url'], **scored})
+    pairs.sort(key=lambda p: -p['match'])
+    for p in profiles:
+        p.pop('_p')
+    return {'profiles': profiles, 'pairs': pairs, 'creditsCharged': charged, 'status': upriver.status(), 'stopped': stopped,
+            'note': 'Audience profile match compares audience countries, gender mix and age range from Upriver. It estimates whether overlap is possible; it does not count shared followers.'}
 
 
 @app.post('/api/upriver/similar')
@@ -363,7 +427,7 @@ def upriver_similar(request: SimilarRequest, _: AuthenticatedUser = Depends(user
     from collect.aggregate import restricted_match
     for cid in request.creatorIds:
         anchor = real_provider.planner.by_id[cid]
-        url = 'https://www.youtube.com/channel/%s' % cid if cid.startswith('UC') else (anchor.get('handle') and 'https://www.youtube.com/%s' % anchor['handle'])
+        url = anchor.get('url') or ('https://www.youtube.com/channel/%s' % cid if cid.startswith('UC') else None)
         if not url:
             continue
         try:

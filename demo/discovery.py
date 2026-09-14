@@ -77,7 +77,79 @@ def status(job_id):
         return dict(job) if job else None
 
 
-def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=False):
+SEARCH_CREDIT_BUDGET = int(os.environ.get("CROSSPLATFORM_CREDIT_BUDGET", "200"))
+
+
+def _crossplatform(job_id, agg, plan, restricted, upriver_transport=None):
+    """Add Instagram/TikTok creators and audience profiles within a per-search credit budget."""
+    spent, external, profiles, notes = 0, [], {}, []
+    restricted_lower = {r.lower() for r in (restricted or set())}
+    categories = [plan.get("category") or plan["campaign_name"]]
+    ids = upriver.category_ids(plan.get("category") or plan["campaign_name"], transport=upriver_transport)  # free
+    query = plan["queries"][0][0] if plan.get("queries") else plan["campaign_name"]
+    for platform in ("instagram", "tiktok"):
+        if spent + upriver.estimate(5) > SEARCH_CREDIT_BUDGET:
+            break
+        try:
+            found = upriver.search(platform, categories, limit=5, transport=upriver_transport, content_query=query, ids=ids)
+        except PlanError as exc:
+            notes.append(str(exc))
+            break
+        spent += found["creditsCharged"]
+        for row in found["results"]:
+            label = "%s %s" % (row.get("name") or "", row.get("handle") or "")
+            if not row.get("followers") or (restricted_lower and aggregate.restricted_match(label, restricted_lower)):
+                continue
+            external.append({"id": "%s:%s" % (platform, str(row.get("handle") or row["url"]).lstrip("@").lower()), "name": row.get("name"),
+                             "platform": platform, "handle": row.get("handle"), "url": row["url"], "followers": row["followers"],
+                             "topic": plan.get("category") or "Creator"})
+    # Only YouTube creators the planner can use are worth profiling: skip channels set aside for too few comments.
+    min_commenters = int(agg.get("metadata", {}).get("min_commenters", 0))
+    sizes = {}
+    for seg in agg.get("audience_segments") or []:
+        for cid in seg.get("creators", []):
+            sizes[cid] = sizes.get(cid, 0) + seg.get("count", 0)
+    usable = [c for c in agg["creators"] if c["id"].startswith("UC") and sizes.get(c["id"], min_commenters) >= min_commenters]
+    youtube = sorted(usable, key=lambda c: -(c.get("subscribers") or 0))[:6]
+    targets = [(e["url"], e) for e in external] + [("https://www.youtube.com/channel/%s" % c["id"], c) for c in youtube]
+    affordable = max((SEARCH_CREDIT_BUDGET - spent) // upriver.AUDIENCE_CREDITS, 0)
+    if len(targets) > affordable:
+        notes.append("Profiled %d of %d creators to stay within the %d-credit search budget." % (affordable, len(targets), SEARCH_CREDIT_BUDGET))
+        targets = targets[:affordable]
+    done, failed, lock = 0, 0, threading.Lock()
+    _update(job_id, progress=0.94, message="Reading audience profiles (0 of %d)" % len(targets))
+
+    def lookup(target):
+        url, owner = target
+        try:
+            return owner, upriver.audience(url, transport=upriver_transport), None
+        except upriver.CapReached as exc:
+            return owner, None, exc
+        except PlanError as exc:  # one creator Upriver can't resolve (or a billed timeout) must not stop the rest
+            return owner, None, exc
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for owner, result, error in pool.map(lookup, targets):
+            with lock:
+                done += 1
+                if error is not None:
+                    failed += 1
+                    if isinstance(error, upriver.CapReached) and not any("credit cap" in n for n in notes):
+                        notes.append(str(error))
+                else:
+                    spent += result["creditsCharged"]
+                    if owner.get("platform") in ("instagram", "tiktok"):
+                        owner["audience"] = result["audience"]
+                    else:
+                        profiles[owner["id"]] = result["audience"]
+                _update(job_id, progress=0.94 + 0.05 * done / max(len(targets), 1),
+                        message="Reading audience profiles (%d of %d%s)" % (done, len(targets), ", %d unavailable" % failed if failed else ""))
+    if failed:
+        notes.append("%d audience profiles were unavailable from Upriver; those creators' overlap is marked assumed." % failed)
+    return {"external": external, "profiles": profiles, "credits": spent, "notes": notes}
+
+
+def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=False, cross_platform=False):
     prompt = (prompt or "").strip()
     if not 3 <= len(prompt) <= 300:
         raise PlanError("Describe the campaign in 3-300 characters.")
@@ -90,7 +162,7 @@ def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=Fal
         _jobs[job_id] = {"id": job_id, "prompt": prompt, "status": "running", "step": "plan", "progress": 0.02,
                          "message": "Understanding your brief", "dataset_id": None, "error": None, "units": 0}
     _running.set()
-    thread = threading.Thread(target=_run, args=(job_id, prompt, keys, restricted or set(), transport, expand_with_upriver), daemon=True)
+    thread = threading.Thread(target=_run, args=(job_id, prompt, keys, restricted or set(), transport, expand_with_upriver, None, cross_platform), daemon=True)
     thread.start()
     return job_id
 
@@ -121,7 +193,7 @@ def _lookalikes(client, anchors, known, upriver_transport=None):
     return [i for i in items if i["id"] not in known], spent, notes
 
 
-def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False, upriver_transport=None):
+def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False, upriver_transport=None, cross_platform=False):
     try:
         ANALYSES.mkdir(parents=True, exist_ok=True)
         plan = plan_search(prompt)
@@ -229,12 +301,22 @@ def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False,
         agg["metadata"]["prompt"] = prompt
         agg["metadata"]["min_commenters"] = int(os.environ.get("DISCOVERY_MIN_COMMENTERS", "25"))
         agg["metadata"]["upriver_lookalikes"] = sorted(lookalike_ids & {c["id"] for c in agg["creators"]})
+        cross_note = None
         agg["metadata"]["upriver_credits"] = upriver_credits
+        if cross_platform:
+            _update(job_id, step="build", progress=0.92, message="Finding Instagram and TikTok creators with Upriver")
+            block = _crossplatform(job_id, agg, plan, restricted, upriver_transport)
+            if block["external"]:
+                agg["crossplatform"] = block
+                agg["metadata"]["upriver_credits"] = upriver_credits + block["credits"]
+            cross_note = ("Instagram/TikTok skipped: %s" % block["notes"][0]) if not block["external"] and block["notes"] else \
+                (" ".join(block["notes"]) if block["notes"] else None)
         agg["metadata"]["queries"] = [q for q, _ in plan["queries"]]
         (ANALYSES / (dataset_id + ".json")).write_text(json.dumps(agg))
         (ANALYSES / (dataset_id + ".report.json")).write_text(json.dumps(report))
         _update(job_id, status="done", step="done", progress=1.0, dataset_id=dataset_id, units=sum(client.units.values()) + 99 * len(plan["queries"]),
-                message="Mapped %d creators and %d sampled commenters" % (len(agg["creators"]), report["unique_commenters"]))
+                message="Mapped %d creators and %d sampled commenters%s" % (len(agg["creators"]), report["unique_commenters"],
+                                                                         (". " + cross_note) if cross_note else ""), note=cross_note)
     except (PlanError, youtube.QuotaExhausted, youtube.ApiError) as exc:
         _update(job_id, status="error", error=str(exc), message=str(exc))
     except Exception:  # noqa: BLE001 - surface a safe message; details stay in server logs

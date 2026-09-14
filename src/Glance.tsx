@@ -202,7 +202,15 @@ export function AlreadyCovered({ rows }: { rows: LeftOut[] }) {
 
 const EMPTY_DIAG: RosterDiag = { ids: [], spend: 0, coverage: 0, standalone: 0, shared: 0, sharedRate: 0 };
 
-export function Glance({ result, creatorCount }: { result: GlanceInput; creatorCount: number }) {
+type EvidenceMix = { measured: number; estimated: number; assumed: number; pairs: number; measuredShare: number | null };
+
+type Choice = { kind: string; headline: string; reasons: string[]; overlapConfidence: 'measured' | 'estimated' | 'assumed' };
+
+export function Glance({ result, creatorCount, onExplain }: { result: GlanceInput & { datasetKind?: string; evidenceMix?: EvidenceMix; choice?: Choice }; creatorCount: number; onExplain?: () => void }) {
+  const why = result.choice;
+  const assumed = why?.overlapConfidence === 'assumed';
+  const cross = result.datasetKind === 'crossplatform';
+  const mix = result.evidenceMix;
   const diag = result.rosterDiagnostics?.rosters;
   const rec = diag?.recommended ?? EMPTY_DIAG, cur = diag?.current ?? EMPTY_DIAG;
   const spend = result.budget - result.remainingBudget;
@@ -229,21 +237,38 @@ export function Glance({ result, creatorCount }: { result: GlanceInput; creatorC
       </div>
       <div className="hero-metric rise">
         <div className="hero-metric-copy">
-          <span className="hero-label">Audience overlap <em>lower is better</em></span>
+          <span className="hero-label">{cross ? 'Estimated audience overlap' : 'Audience overlap'} <em>lower is better</em></span>
           <div className="hero-values">
-            <div className="hv plan"><em>Recommended</em><strong>{pct(overlap)}</strong></div>
-            <div className="hv mine"><em>Your roster</em><strong>{pct(mine.overlap)}</strong></div>
+            <div className={`hv plan ${assumed ? 'assumed' : ''}`}><em>Recommended{assumed ? ' · assumed' : ''}</em><strong>{assumed ? '≈' : ''}{pct(overlap)}</strong></div>
+            <div className={`hv mine ${assumed ? 'assumed' : ''}`}><em>Your roster</em><strong>{assumed && cur.ids.length > 1 ? '≈' : ''}{pct(mine.overlap)}</strong></div>
           </div>
-          <p>{sentence}</p>
+          {why ? (
+            <div className={`why why-${why.kind}`}>
+              <span className="why-tag">{why.kind === 'tradeoff' ? 'Trade-off: more reach' : why.kind === 'tradeoff_reach' ? 'Trade-off: less reach' : why.kind === 'better' ? 'Better on both' : why.kind === 'same' ? 'Your roster wins' : 'How to compare'}</span>
+              <p>{why.headline}</p>
+              {why.reasons.length > 0 && <ul>{why.reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
+            </div>
+          ) : <p>{sentence}</p>}
         </div>
         <div className="hero-bars" aria-hidden="true">
           <div className="hb"><em>Recommended</em><div className="hb-track"><i className="grow-x plan" style={{ width: `${(rec.sharedRate / scale) * 100}%` }} /></div></div>
           <div className="hb"><em>Your roster</em><div className="hb-track"><i className="grow-x mine" style={{ width: `${(cur.sharedRate / scale) * 100}%`, animationDelay: '120ms' }} /></div></div>
-          <small>Repeated memberships ÷ total commenter memberships across the roster</small>
+          <small>{cross ? 'Estimated shared followers ÷ total followers across the roster' : 'Repeated memberships ÷ total commenter memberships across the roster'}</small>
+          {cross && mix && mix.pairs > 0 && (
+            <div className="evidence-mix">
+              <div className="em-bar" aria-hidden="true">
+                <i className="m" style={{ width: `${(mix.measured / mix.pairs) * 100}%` }} />
+                <i className="e" style={{ width: `${(mix.estimated / mix.pairs) * 100}%` }} />
+                <i className="a" style={{ width: `${(mix.assumed / mix.pairs) * 100}%` }} />
+              </div>
+              <span><b className="m">{mix.measured} measured</b> · <b className="e">{mix.estimated} estimated</b>{mix.assumed ? <> · <b className="a">{mix.assumed} assumed</b></> : null} creator pairs</span>
+              {onExplain && <button className="link-btn" onClick={onExplain}>How estimates work</button>}
+            </div>
+          )}
         </div>
       </div>
       <div className="support">
-        <Support label="Commenter accounts covered" mine={compact(mine.reached)} plan={compact(reached)} better={rec.coverage > cur.coverage ? 'plan' : rec.coverage < cur.coverage ? 'mine' : 'tie'} />
+        <Support label={cross ? 'Estimated unique followers' : 'Commenter accounts covered'} mine={compact(mine.reached)} plan={compact(reached)} better={rec.coverage > cur.coverage ? 'plan' : rec.coverage < cur.coverage ? 'mine' : 'tie'} />
         <Support label="Spend" mine={money(mine.spent)} plan={money(spent)} note={`of ${money(result.budget)}`} />
         <Support label="Creators" mine={String(Math.round(mine.count))} plan={String(Math.round(count))} note={`from ${creatorCount}`} />
       </div>

@@ -24,3 +24,19 @@ def test_studio_save_roundtrip_preserves_inputs_and_owner(monkeypatch, tmp_path)
         assert client.get('/api/campaigns').json()['campaigns'] == []
         assert client.get('/api/campaigns/' + record['id']).status_code == 404
         main.app.dependency_overrides.clear()
+
+
+def test_requests_from_a_page_showing_another_dataset_get_a_reload_signal(monkeypatch, tmp_path):
+    monkeypatch.setenv('AUTH_MODE', 'local')
+    monkeypatch.setenv('MUSE_DATASET', 'synthetic')
+    monkeypatch.setenv('CAMPAIGN_STORE', 'local')
+    monkeypatch.setenv('LOCAL_CAMPAIGN_DB', str(tmp_path / 'campaigns.json'))
+    from backend import main
+    main = importlib.reload(main)
+    with TestClient(main.app) as client:
+        payload = client.get('/api/creators').json()
+        body = dict(budget=139000, currentRoster=[payload['creators'][0]['id']])
+        stale = client.post('/api/plan', json=body, headers={'X-Dataset-Version': 'previous-search'})
+        assert stale.status_code == 409 and stale.json()['code'] == 'dataset_changed'
+        fresh = client.post('/api/plan', json=body, headers={'X-Dataset-Version': payload['datasetVersion']})
+        assert fresh.status_code == 200, fresh.text

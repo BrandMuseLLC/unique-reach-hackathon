@@ -5,10 +5,13 @@ import { ExploreOverlap } from './ExploreOverlap';
 import { WhyNotPanel, type WhyNot } from './WhyNotPanel';
 import whiteWordmark from '../brandmuse/assets/brand-muse-wordmark-white.jpg';
 
-type Creator = { source?: 'synthetic' | 'observed-public'; id: string; name: string; category: string; estimatedViews: number; baseCost: number; eligibilityStatus: string;
+type Creator = { audienceDescription?: string; platform?: 'youtube' | 'instagram' | 'tiktok'; url?: string | null; followers?: number; audienceSummary?: string; hasAudienceData?: boolean; overlapEvidence?: string; source?: 'synthetic' | 'observed-public'; id: string; name: string; category: string; estimatedViews: number; baseCost: number; eligibilityStatus: string;
   sponsorMentions?: { brands: { brand: string }[] } | null; creatorCountry?: string | null; foundBy?: 'upriver' | 'youtube_search' };
 type Lookalike = { creatorId?: string; name: string; platform: string; handle?: string; url?: string; followers?: number | null; followerBucket?: string | null; score: number | null; otherChannels: { platform: string; handle?: string }[] };
 type LookalikeGroup = { anchorId: string; anchorName: string; results: Lookalike[]; incomplete: boolean; cached: boolean };
+type MatchProfile = { url: string; name: string; source: 'lookalike' | 'plan'; platform: string; summary: string; hasData: boolean };
+type MatchPair = { a: string; b: string; match: number; parts: Record<string, number>; basis: string[]; complete: boolean };
+type AudienceMatch = { profiles: MatchProfile[]; pairs: MatchPair[]; creditsCharged: number; stopped: string | null; note: string };
 type UpriverStatus = { configured: boolean; creditsReservedThisSession: number; creditCap: number; creditsRemaining: number };
 type Campaign = { id: string; name: string; category: string; audience: string };
 type RosterDiag = { ids: string[]; spend: number; coverage: number; standalone: number; shared: number; sharedRate: number };
@@ -37,6 +40,7 @@ const SECTIONS = [
   { id: 'map', label: 'Audience map', icon: MapIcon },
   { id: 'platforms', label: 'Beyond YouTube', icon: Globe },
   { id: 'whynot', label: 'Why not', icon: CircleHelp },
+  { id: 'method', label: 'How estimates work', icon: BarChart3 },
 ] as const;
 const STEPS = [['plan', 'Understanding brief'], ['search', 'Searching YouTube'], ['videos', 'Reading videos'], ['comments', 'Sampling comments'], ['build', 'Mapping overlap']] as const;
 const SUGGESTIONS = ['More latte art', 'Less overlap', 'Make it cheaper', 'Where do I see why a creator was left out?'];
@@ -44,9 +48,15 @@ const SUGGESTIONS = ['More latte art', 'Less overlap', 'Make it cheaper', 'Where
 const money = (v: number) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const compact = (v: number) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(Math.round(v));
 
+// The dataset this page is showing; sent with every request so the server can say when another tab switched it.
+let pageDataset = '';
+class DatasetChanged extends Error {}
+
 async function api<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const headers: Record<string, string> = pageDataset ? { 'X-Dataset-Version': pageDataset } : {};
+  const response = await fetch(path, body === undefined ? { headers } : { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 409 && payload.code === 'dataset_changed') throw new DatasetChanged(payload.error);
   if (!response.ok) throw new Error(payload.error ?? `Request failed (${response.status})`);
   return payload as T;
 }
@@ -78,9 +88,16 @@ export function Studio() {
   const [prompt, setPrompt] = useState('');
   const [upriverStatus, setUpriverStatus] = useState<UpriverStatus | null>(null);
   const [useUpriver, setUseUpriver] = useState(false);
+  const [crossPlatform, setCrossPlatform] = useState(false);
+  const [platformFilter, setPlatformFilter] = useState<'all' | 'youtube' | 'instagram' | 'tiktok'>('all');
+  const [method, setMethod] = useState<{ kappa: number; calibrationPairs: number; defaultKappa: number; unknownMatch: number; weights: Record<string, number>; quotePer1k: Record<string, number> } | null>(null);
+  const [datasetKind, setDatasetKind] = useState('');
   const [lookalikes, setLookalikes] = useState<LookalikeGroup[]>([]);
   const [lookalikeBusy, setLookalikeBusy] = useState(false);
   const [lookalikeNote, setLookalikeNote] = useState('');
+  const [picked, setPicked] = useState<Record<string, { url: string; name: string }>>({});
+  const [matchResult, setMatchResult] = useState<AudienceMatch | null>(null);
+  const [matchBusy, setMatchBusy] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: 'assistant', text: 'Hi, I’m Muse. Ask me to change the plan ("less overlap", "drop a creator", "spend less"), explain a choice, or find where something is on the page.' }]);
   const [draft, setDraft] = useState('');
@@ -127,12 +144,16 @@ export function Studio() {
     setError('');
     try {
       const payload = await api<{ campaign: Campaign; creators: Creator[]; datasetVersion: string; datasetLabel?: string; defaultBudget?: number; defaultCurrentRoster?: string[]; evidence?: Evidence; defaultRosterBasis?: string }>('/api/creators');
+      pageDataset = payload.datasetVersion;
       setDatasetVersion(payload.datasetVersion);
       setDatasetLabel(payload.datasetLabel ?? 'Sampled commenter evidence; not validated unique viewers.');
       setSaveName(`${payload.campaign.name} plan`.slice(0, 80));
       setSaveStatus('');
       void api<{ campaigns: SavedCampaign[] }>('/api/campaigns').then(p => setSaved(p.campaigns)).catch(() => setSaveStatus('Saved campaigns unavailable.'));
       setEvidence(payload.evidence ?? null);
+      setDatasetKind((payload as { datasetKind?: string }).datasetKind ?? '');
+      setMethod((payload as { method?: typeof method }).method ?? null);
+      setPlatformFilter('all');
       setRosterBasis(payload.defaultRosterBasis ?? '');
       setDelta(null);
       planRef.current = null;
@@ -146,6 +167,8 @@ export function Studio() {
       setOpenRow('');
       setLookalikes([]);
       setLookalikeNote('');
+      setPicked({});
+      setMatchResult(null);
       await runPlan(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load creators.');
@@ -159,7 +182,10 @@ export function Studio() {
       const result = await api<{ campaigns: SavedCampaign[] }>('/api/campaigns');
       setSaved(result.campaigns);
       setSaveStatus('Campaign saved.');
-    } catch (e) { setSaveStatus(e instanceof Error ? e.message : 'Save failed.'); }
+    } catch (e) {
+      if (e instanceof DatasetChanged) { setSaveStatus('Not saved: ' + e.message); void reloadActive(e.message); return; }
+      setSaveStatus(e instanceof Error ? e.message : 'Save failed.');
+    }
     finally { setSaving(false); }
   }
 
@@ -206,7 +232,9 @@ export function Studio() {
       if (id !== requestId.current) return;
       applyPlan(next, result);
     } catch (e) {
-      if (id === requestId.current) setError(e instanceof Error ? e.message : 'Planning failed.');
+      if (id !== requestId.current) return;
+      if (e instanceof DatasetChanged) { void reloadActive(e.message); return; }
+      setError(e instanceof Error ? e.message : 'Planning failed.');
     } finally {
       if (id === requestId.current) setLoading(false);
     }
@@ -231,7 +259,16 @@ export function Studio() {
     window.setTimeout(() => setFlash(''), 1600);
   }
 
+  // Another tab or a finished search switched the server's active dataset: follow it instead of showing an ID error.
+  async function reloadActive(note: string) {
+    ++requestId.current;
+    await refreshDatasets();
+    await loadDataset();
+    setMessages((m) => [...m, { role: 'assistant', text: note, section: 'overview' }]);
+  }
+
   async function activate(id: string) {
+    ++requestId.current;  // results of plans started for the previous dataset are ignored
     try {
       await api('/api/datasets/activate', { id });
       await refreshDatasets();
@@ -248,7 +285,8 @@ export function Studio() {
     setError('');
     goTo('discover');
     try {
-      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: useUpriver && Boolean(upriverStatus?.configured) });
+      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: useUpriver && Boolean(upriverStatus?.configured),
+        crossPlatform: crossPlatform && Boolean(upriverStatus?.configured) });
       setJob(started.job);
       let failures = 0;
       const poll = async () => {
@@ -293,6 +331,21 @@ export function Studio() {
     }
   }
 
+  async function compareAudiences() {
+    if (!plan) return;
+    setMatchBusy(true);
+    try {
+      const payload = await api<AudienceMatch & { status: UpriverStatus }>('/api/upriver/audience-match', {
+        profiles: Object.values(picked).slice(0, 8), planCreatorIds: plan.recommended.ids.slice(0, 3) });
+      setMatchResult(payload);
+      setUpriverStatus(payload.status);
+    } catch (e) {
+      setLookalikeNote(e instanceof Error ? e.message : 'Audience comparison failed.');
+    } finally {
+      setMatchBusy(false);
+    }
+  }
+
   async function send(text = draft) {
     const message = text.trim();
     if (!message || chatBusy) return;
@@ -315,6 +368,7 @@ export function Studio() {
       setMessages((m) => [...m, { role: 'assistant', text: reply.reply, change: reply.change, section: reply.section, discoverPrompt: reply.discoverPrompt }]);
       if (reply.section && reply.intent !== 'discover') goTo(reply.section);
     } catch (e) {
+      if (e instanceof DatasetChanged) { void reloadActive(e.message + ' Ask again and I\u2019ll use this search.'); return; }
       setMessages((m) => [...m, { role: 'assistant', text: e instanceof Error ? e.message : 'Something went wrong.', error: true }]);
     } finally {
       setChatBusy(false);
@@ -327,6 +381,7 @@ export function Studio() {
   const rows = creators
     .filter((c) => c.eligibilityStatus !== 'ineligible')
     .filter((c) => !query.trim() || c.name.toLowerCase().includes(query.trim().toLowerCase()))
+    .filter((c) => platformFilter === 'all' || c.platform === platformFilter)
     .filter((c) => filter === 'all'
       || (filter === 'recommended' && ((planIds?.has(c.id) ?? false) || inputs.exclude.includes(c.id) || inputs.include.includes(c.id) || openRow === c.id))
       || (filter === 'roster' && inputs.currentRoster.includes(c.id))
@@ -378,6 +433,14 @@ export function Studio() {
                 {job?.status === 'running' ? <Loader2 className="spin" size={16} /> : <Search size={16} />}Find creators
               </button>
             </div>
+            <label className={`hero-option ${upriverStatus?.configured ? '' : 'locked'}`}>
+              <input type="checkbox" checked={crossPlatform && Boolean(upriverStatus?.configured)} onChange={(e) => setCrossPlatform(e.target.checked)}
+                disabled={job?.status === 'running' || !upriverStatus?.configured} />
+              Plan across YouTube, Instagram and TikTok{' '}
+              <small>{upriverStatus?.configured
+                ? '(Upriver finds Instagram/TikTok creators and audience profiles · up to ~200 credits)'
+                : '(needs the Upriver API key: add UPRIVER_API_KEY to .env and restart)'}</small>
+            </label>
             {upriverStatus?.configured && (
               <label className="hero-option">
                 <input type="checkbox" checked={useUpriver} onChange={(e) => setUseUpriver(e.target.checked)} disabled={job?.status === 'running'} />
@@ -458,7 +521,7 @@ export function Studio() {
             </div>
           )}
           {plan?.rosterDiagnostics ? (
-            <Glance key={`${plan.recommended.ids.join('|')}-${plan.budget}`} result={plan} creatorCount={eligible.length} />
+            <Glance key={`${plan.recommended.ids.join('|')}-${plan.budget}`} result={plan} creatorCount={eligible.length} onExplain={() => goTo('method')} />
           ) : <div className="placeholder">Run the plan to see the overview.</div>}
           {recDiag && plan && (
             <div className="roster-cards">
@@ -482,6 +545,15 @@ export function Studio() {
               <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}</button>
             ))}
           </div>
+          {datasetKind === 'crossplatform' && (
+            <div className="tabs platform-tabs">
+              {([['all', 'All platforms'], ['youtube', 'YouTube'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']] as const).map(([id, label]) => (
+                <button key={id} className={platformFilter === id ? 'active' : ''} onClick={() => setPlatformFilter(id)}>
+                  {label}{id !== 'all' && <span className="tab-count">{creators.filter((c) => c.platform === id && c.eligibilityStatus !== 'ineligible').length}</span>}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="clist">
             {rows.length === 0 && <p className="placeholder small">No creators here.</p>}
             {rows.map((c) => {
@@ -494,7 +566,7 @@ export function Studio() {
                     <input type="checkbox" checked={inputs.currentRoster.includes(c.id)} aria-label={`${c.name} is in your roster`}
                       onChange={() => update({ currentRoster: inputs.currentRoster.includes(c.id) ? inputs.currentRoster.filter((x) => x !== c.id) : [...inputs.currentRoster, c.id] })} />
                     <span className="avatar">{c.name.replace(/^@/, '').slice(0, 1).toUpperCase()}</span>
-                    <div className="crow-name"><strong>{c.name}{c.foundBy === 'upriver' && <span className="found-by">Upriver lookalike</span>}</strong><small>{c.category} · {compact(c.estimatedViews)} views</small></div>
+                    <div className="crow-name"><strong>{c.platform && datasetKind === 'crossplatform' && <span className={`plat plat-${c.platform} plat-inline`}>{c.platform === 'tiktok' ? 'TikTok' : c.platform === 'instagram' ? 'Instagram' : 'YouTube'}</span>}{c.name}{c.foundBy === 'upriver' && <span className="found-by">Upriver lookalike</span>}</strong><small>{datasetKind === 'crossplatform' ? `${c.category} · ${compact(c.followers ?? c.estimatedViews)} followers` : `${c.category} · ${compact(c.estimatedViews)} views`}</small></div>
                     <span className={`badge b-${status}`}>
                       {status === 'recommended' ? 'In the plan' : status === 'required' ? 'Required' : status === 'excluded' ? 'Excluded'
                         : status === 'left' ? (why && Math.round(why.alreadyCoveredShare * 100) >= 1 ? `${Math.round(why.alreadyCoveredShare * 100)}% already reached` : 'Not picked') : ''}
@@ -506,6 +578,8 @@ export function Studio() {
                   </div>
                   {open && (
                     <div className="crow-detail">
+                      {datasetKind === 'crossplatform' && c.audienceDescription && <p className="muted">Upriver: {c.audienceDescription}</p>}
+                      {datasetKind === 'crossplatform' && <p className="muted">Audience: {c.audienceSummary || 'No audience data from Upriver'} · overlap with others is {c.overlapEvidence === 'estimated' ? 'estimated from audience profiles' : 'measured with other YouTube creators, estimated with Instagram/TikTok'}</p>}
                       <p>{status === 'recommended' ? 'Picked because it adds the most new audience for its quote at this budget.'
                         : why ? (why.overlapsWith.length ? `${Math.round(why.alreadyCoveredShare * 100)}% of its commenters are already reached through ${why.overlapsWith.map((o) => o.creatorName).join(', ')}. ${why.reason}` : why.reason)
                         : 'Run the plan to see how this creator compares.'}</p>
@@ -556,21 +630,103 @@ export function Studio() {
               ) : (
                 <div className="look-grid">
                   {g.results.map((r, i) => (
-                    <a className="look-card rise" style={{ animationDelay: `${i * 40}ms` }} key={`${r.platform}-${r.handle}-${i}`} href={r.url} target="_blank" rel="noreferrer noopener">
+                    <div className={`look-card rise ${r.url && picked[r.url] ? 'picked' : ''}`} style={{ animationDelay: `${i * 40}ms` }} key={`${r.platform}-${r.handle}-${i}`}>
                       <div className="look-top">
-                        <span className={`plat plat-${r.platform}`}>{r.platform === 'tiktok' ? 'TikTok' : r.platform === 'instagram' ? 'Instagram' : r.platform}</span>
-                        <ExternalLink size={13} />
+                        <label className="look-pick">
+                          <input type="checkbox" disabled={!r.url || (!picked[r.url!] && Object.keys(picked).length >= 8)} checked={Boolean(r.url && picked[r.url])}
+                            onChange={() => setPicked((cur) => { const next = { ...cur }; if (next[r.url!]) delete next[r.url!]; else next[r.url!] = { url: r.url!, name: r.name }; return next; })} />
+                          <span className={`plat plat-${r.platform}`}>{r.platform === 'tiktok' ? 'TikTok' : r.platform === 'instagram' ? 'Instagram' : r.platform}</span>
+                        </label>
+                        {r.url && <a href={r.url} target="_blank" rel="noreferrer noopener" aria-label={`Open ${r.name}`}><ExternalLink size={13} /></a>}
                       </div>
                       <strong>{r.name}</strong>
                       <small>{r.handle ? `@${String(r.handle).replace(/^@/, '')}` : ''}{r.followers ? ` · ${compact(r.followers)} followers` : r.followerBucket ? ` · ${r.followerBucket.replace(/_/g, '–')} followers` : ''}</small>
                       {r.score !== null && <div className="look-score"><i style={{ width: `${Math.round(r.score * 100)}%` }} /><span>{Math.round(r.score * 100)}% similar</span></div>}
                       {r.otherChannels.length > 0 && <small className="muted">Also on {r.otherChannels.map((o) => o.platform).join(', ')}</small>}
-                    </a>
+                    </div>
                   ))}
                 </div>
               )}
             </div>
           ))}
+        </section>
+
+        {lookalikes.length > 0 && (
+          <section className="stage-section panel-lite match-panel">
+            <div className="section-head">
+              <div>
+                <h2>Audience profile match</h2>
+                <p>Tick Instagram or TikTok creators above, then compare their audiences with each other and with the top {Math.min(plan?.recommended.ids.length ?? 0, 3)} creators in your plan. Based on audience countries, gender mix and age range from Upriver.</p>
+              </div>
+              <button className="btn-primary" disabled={matchBusy || Object.keys(picked).length === 0 || !upriverStatus?.configured} onClick={() => void compareAudiences()}>
+                {matchBusy ? <Loader2 className="spin" size={16} /> : <Users size={16} />}Compare {Object.keys(picked).length + Math.min(plan?.recommended.ids.length ?? 0, 3)} profiles
+              </button>
+            </div>
+            <p className="muted-line">About 8 credits per creator not already looked up · {upriverStatus?.creditsRemaining ?? 0} left this session</p>
+            {matchResult && (() => {
+              const byUrl = Object.fromEntries(matchResult.profiles.map((p) => [p.url, p]));
+              const band = (m: number) => (m >= 0.7 ? ['high', 'Very similar audiences'] : m >= 0.4 ? ['mid', 'Some similarity'] : ['low', 'Different audiences']);
+              return (
+                <div className="match-grid">
+                  <div className="match-profiles">
+                    {matchResult.profiles.map((p) => (
+                      <div className={`match-profile ${p.hasData ? '' : 'nodata'}`} key={p.url}>
+                        <span className={`plat plat-${p.platform || 'youtube'}`}>{p.source === 'plan' ? 'In your plan' : p.platform === 'tiktok' ? 'TikTok' : p.platform === 'instagram' ? 'Instagram' : p.platform}</span>
+                        <strong>{p.name}</strong>
+                        <small>{p.summary}</small>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="match-pairs">
+                    {matchResult.pairs.length === 0 && <p className="placeholder small">Upriver had no comparable audience data for these creators.</p>}
+                    {matchResult.pairs.map((pair, i) => {
+                      const [level, label] = band(pair.match);
+                      return (
+                        <div className={`match-pair ${level}`} key={`${pair.a}-${pair.b}`} style={{ animationDelay: `${i * 40}ms` }}>
+                          <div className="mp-names"><strong>{byUrl[pair.a]?.name}</strong><span>and</span><strong>{byUrl[pair.b]?.name}</strong></div>
+                          <div className="mp-bar"><i className="grow-x" style={{ width: `${Math.round(pair.match * 100)}%` }} /></div>
+                          <div className="mp-meta"><b>{Math.round(pair.match * 100)}%</b><span>{label}{pair.complete ? '' : ` · compared on ${pair.basis.join(', ')}`}</span></div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+            {matchResult && <p className="aud-foot">{matchResult.stopped ? `${matchResult.stopped} ` : ''}{matchResult.note} {matchResult.creditsCharged ? `Used about ${matchResult.creditsCharged} credits.` : 'Used saved results, no credits.'}</p>}
+          </section>
+        )}
+
+        <section id="method" className={`stage-section panel-lite method ${flash === 'method' ? 'flash' : ''}`}>
+          <div className="section-head"><div><h2>How estimates work</h2><p>Where every overlap number comes from, and how much to trust it.</p></div></div>
+          <div className="method-grid">
+            <div className="method-card">
+              <span className="tag tag-little">Measured</span>
+              <h3>YouTube to YouTube</h3>
+              <p>We read public comments on each channel&rsquo;s recent videos. If the same account comments on both channels, that&rsquo;s a shared audience member. Overlap = shared commenters ÷ the smaller channel&rsquo;s commenters. It&rsquo;s a sample of real accounts, not every viewer.</p>
+            </div>
+            <div className="method-card">
+              <span className="tag tag-budget">Estimated</span>
+              <h3>Any pair with Instagram or TikTok</h3>
+              <p>Instagram and TikTok don&rsquo;t let us read other creators&rsquo; comments or followers, so we estimate. Upriver provides each creator&rsquo;s <b>audience profile</b>: main gender and its share, age range, main countries (sometimes without percentages), main language, a short description, and a confidence rating (high, medium or low) for each part. Upriver builds these from its own creator index and doesn&rsquo;t publish exactly how, so treat them as Upriver&rsquo;s best estimate of who follows the creator.</p>
+            </div>
+            <div className="method-card">
+              <h3>Audience profile match</h3>
+              <p>We compare two profiles: <b>countries</b> ({Math.round((method?.weights?.geography ?? 0.4) * 100)}% of the score: how much of both audiences sits in the same countries; when Upriver lists countries without percentages they count equally), <b>gender mix</b> ({Math.round((method?.weights?.gender ?? 0.2) * 100)}%), <b>age range</b> ({Math.round((method?.weights?.age ?? 0.2) * 100)}%: how much the ranges overlap) and <b>language</b> ({Math.round((method?.weights?.language ?? 0.2) * 100)}%). A part Upriver marks low confidence counts for less. 100% means the profiles look the same, which makes overlap possible, not certain.</p>
+            </div>
+            <div className="method-card">
+              <h3>From match to estimated overlap</h3>
+              <p>A profile match isn&rsquo;t a count of shared followers, so we scale it. Where two YouTube creators have both a measured overlap and a profile match, we learn how the two relate. Current factor: <b>{method ? method.kappa.toFixed(2) : '—'}</b>{method ? (method.calibrationPairs >= 3 ? `, learned from ${method.calibrationPairs} YouTube pairs` : ` (default; too few YouTube pairs with both numbers to learn it)`) : ''}. Estimated overlap = factor × profile match. Creators with no Upriver audience data are assumed to be a {Math.round((method?.unknownMatch ?? 0.35) * 100)}% match and labeled <b>assumed</b>.</p>
+            </div>
+            <div className="method-card">
+              <h3>Estimated unique followers</h3>
+              <p>Reach is followers on every platform, so creators compare fairly. For a roster we add everyone&rsquo;s followers, then subtract the estimated shared followers for each pair (overlap × the smaller audience). The plan picks the lowest-overlap roster that still reaches at least as many estimated unique followers as yours.</p>
+            </div>
+            <div className="method-card">
+              <h3>Quotes and limits</h3>
+              <p>When planning across platforms, every quote is modeled per 1,000 followers so platforms compare fairly: about ${method?.quotePer1k?.youtube ?? 20} on YouTube, ${method?.quotePer1k?.instagram ?? 10} on Instagram and ${method?.quotePer1k?.tiktok ?? 7.5} on TikTok. These are rough market rates, not quotes. Edit any quote in the creators list. Upriver&rsquo;s &ldquo;similar creators&rdquo; score is used only to suggest lookalikes and never feeds these numbers.</p>
+            </div>
+          </div>
         </section>
 
         <section id="whynot" className={`stage-section ${flash === 'whynot' ? 'flash' : ''}`}>

@@ -17,7 +17,7 @@ ENV PORT=8080
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
-COPY demo/engine.py demo/ai.py demo/ai_explain.py demo/ai_labels.py demo/assistant.py demo/clusters.py demo/daniel_provider.py demo/discovery.py demo/llm.py demo/upriver.py ./demo/
+COPY demo/engine.py demo/ai.py demo/ai_explain.py demo/ai_labels.py demo/assistant.py demo/choice.py demo/clusters.py demo/daniel_provider.py demo/discovery.py demo/llm.py demo/upriver.py demo/audience_match.py demo/crossplatform.py ./demo/
 COPY collect/__init__.py collect/aggregate.py collect/validation.py collect/youtube.py ./collect/
 ENV MUSE_DATASET=synthetic
 ENV MUSE_LLM_COVERAGE_CONFIRMED=false
