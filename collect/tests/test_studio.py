@@ -375,19 +375,26 @@ def test_crossplatform_lookups_stop_at_search_budget(tmp_path, monkeypatch):
 
 def test_choice_explains_tradeoffs_and_flags_assumed_overlap():
     from demo import choice
-    mine = {"ids": ["a"], "spend": 500, "coverage": 72_000, "sharedRate": 0.0}
-    rec = {"ids": ["b", "c", "d"], "spend": 4250, "coverage": 522_096, "sharedRate": 0.001}
+    mine = {"ids": ["a"], "spend": 500, "coverage": 72_000, "sharedRate": 0.0, "shared": 0}
+    rec = {"ids": ["b", "c", "d"], "spend": 4250, "coverage": 522_096, "sharedRate": 0.03, "shared": 16_000}
     why = choice.explain(mine, rec, unit="followers", current_ids=["a"], feasible_reason=None, creator_count=3,
                          evidence_mix={"measured": 0, "estimated": 0, "assumed": 3, "pairs": 3})
     assert why["kind"] == "tradeoff" and "7.3× more followers" in why["headline"]
     assert any("asked for 3 creators" in r for r in why["reasons"]) and any("single creator" in r for r in why["reasons"])
     assert why["overlapConfidence"] == "assumed" and any("assumed, not measured" in r for r in why["reasons"])
-    same = choice.explain(mine, {"ids": ["b"], "spend": 3500, "coverage": 461_000, "sharedRate": 0.0}, unit="followers",
-                          current_ids=["a"], feasible_reason=None, creator_count=0, evidence_mix={"measured": 0, "estimated": 0, "assumed": 0, "pairs": 0})
-    assert same["headline"].startswith("Same overlap (0.0%), more reach") and same["overlapConfidence"] == "none"
-    over = choice.explain({"ids": ["a", "b"], "spend": 9000, "coverage": 10_000, "sharedRate": 0.02}, rec, unit="commenters",
+    over = choice.explain({"ids": ["a", "b"], "spend": 9000, "coverage": 10_000, "sharedRate": 0.05, "shared": 500}, rec, unit="commenters",
                           current_ids=["a", "b"], feasible_reason="it costs more than the budget", creator_count=0)
     assert over["kind"] == "better"
-    worse = choice.explain({"ids": ["a", "b"], "spend": 9000, "coverage": 600_000, "sharedRate": 0.0}, rec, unit="commenters",
+    worse = choice.explain({"ids": ["a", "b"], "spend": 9000, "coverage": 600_000, "sharedRate": 0.0, "shared": 0}, rec, unit="commenters",
                            current_ids=["a", "b"], feasible_reason="it costs more than the budget", creator_count=0)
     assert worse["kind"] == "tradeoff" and any("costs more than the budget" in r for r in worse["reasons"])
+
+
+def test_choice_calls_sub_one_percent_overlap_negligible_and_shows_two_decimals():
+    from demo import choice
+    mine = {"ids": list("abcdef"), "spend": 22_750, "coverage": 2_900, "sharedRate": 0.0009, "shared": 3}
+    rec = {"ids": list("xyz"), "spend": 18_000, "coverage": 2_100, "sharedRate": 0.0014, "shared": 3}
+    why = choice.explain(mine, rec, unit="commenters", current_ids=mine["ids"], feasible_reason="it costs more than the budget", creator_count=3)
+    assert why["kind"] == "negligible"
+    assert "0.14% vs your 0.09%" in why["headline"] and "reach and cost" in why["headline"]
+    assert "Chose lower overlap" not in why["headline"]

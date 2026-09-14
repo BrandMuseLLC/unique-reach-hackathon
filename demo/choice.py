@@ -14,6 +14,14 @@ def _fmt(n):
     return "%d" % round(n)
 
 
+def _pct(rate):
+    # Two decimals under 1%: sampled overlap is often 0.09% vs 0.19%, which one decimal shows as the same "0.1%".
+    return ("%.2f%%" if 0 < rate < 0.01 else "%.1f%%") % (rate * 100)
+
+
+NEGLIGIBLE = 0.01  # below 1% on both rosters, overlap can't meaningfully separate them
+
+
 def explain(mine, rec, *, unit, current_ids, feasible_reason, creator_count, evidence_mix=None):
     """mine/rec: roster diagnostics dicts (ids, spend, coverage, sharedRate). feasible_reason: None if your roster fits."""
     reasons = []
@@ -26,11 +34,20 @@ def explain(mine, rec, *, unit, current_ids, feasible_reason, creator_count, evi
     elif set(current_ids) == set(rec["ids"]):
         kind = "same"
         headline = "Your roster is already the best option we found at this budget."
+    elif max(rate_rec, rate_mine) < NEGLIGIBLE:
+        kind = "negligible"
+        headline = "Overlap is tiny in both rosters (%s vs your %s: %s vs %s shared %s), so the choice comes down to reach and cost. The recommendation reaches %s %s vs your %s." % (
+            _pct(rate_rec), _pct(rate_mine), _fmt(rec.get("shared", 0)), _fmt(mine.get("shared", 0)), unit,
+            _fmt(reach_rec), unit, _fmt(reach_mine))
+        if feasible_reason:
+            reasons.append("Your roster doesn't fit the current settings (%s)." % feasible_reason)
+        if creator_count and n_rec != n_mine:
+            reasons.append("You asked for %d creators; your roster has %d." % (creator_count, n_mine))
     elif rate_rec > rate_mine + 0.0005:
         kind = "tradeoff"
         more = ("%.1f× more" % (reach_rec / reach_mine)) if reach_mine else "more"
-        headline = "Chose more reach over lower overlap: reaches %s %s (%s vs %s) at %.1f%% overlap vs your %.1f%%." % (
-            more, unit, _fmt(reach_rec), _fmt(reach_mine), rate_rec * 100, rate_mine * 100)
+        headline = "Chose more reach over lower overlap: reaches %s %s (%s vs %s) at %s overlap vs your %s." % (
+            more, unit, _fmt(reach_rec), _fmt(reach_mine), _pct(rate_rec), _pct(rate_mine))
         if feasible_reason:
             reasons.append("Your roster doesn't fit the current settings (%s), so it couldn't be kept." % feasible_reason)
         if creator_count and n_mine != creator_count:
@@ -41,21 +58,21 @@ def explain(mine, rec, *, unit, current_ids, feasible_reason, creator_count, evi
             reasons.append("No roster with less overlap reached as many %s as yours within the budget." % unit)
     elif reach_rec + 1e-6 < reach_mine:
         kind = "tradeoff_reach"
-        headline = "Chose lower overlap over reach: %.1f%% overlap vs your %.1f%%, reaching %s %s vs your %s." % (
-            rate_rec * 100, rate_mine * 100, _fmt(reach_rec), unit, _fmt(reach_mine))
+        headline = "Chose lower overlap over reach: %s overlap vs your %s, reaching %s %s vs your %s." % (
+            _pct(rate_rec), _pct(rate_mine), _fmt(reach_rec), unit, _fmt(reach_mine))
         if feasible_reason:
             reasons.append("Your roster doesn't fit the current settings (%s)." % feasible_reason)
         if creator_count and n_rec < n_mine:
             reasons.append("You asked for %d creators, fewer than your roster's %d, so it reaches fewer people." % (creator_count, n_mine))
     elif abs(rate_rec - rate_mine) <= 0.0005:
         kind = "better"
-        headline = ("Same overlap (%.1f%%), more reach: %s %s vs your %s." % (rate_rec * 100, _fmt(reach_rec), unit, _fmt(reach_mine))
-                    if reach_rec > reach_mine + 1e-6 else "Same overlap and reach as your roster (%.1f%%, %s %s)." % (rate_rec * 100, _fmt(reach_rec), unit))
+        headline = ("Same overlap (%s), more reach: %s %s vs your %s." % (_pct(rate_rec), _fmt(reach_rec), unit, _fmt(reach_mine))
+                    if reach_rec > reach_mine + 1e-6 else "Same overlap and reach as your roster (%s, %s %s)." % (_pct(rate_rec), _fmt(reach_rec), unit))
     else:
         kind = "better"
-        headline = "Less overlap without losing reach: %.1f%% vs your %.1f%%, reaching %s %s vs %s." % (
-            rate_rec * 100, rate_mine * 100, _fmt(reach_rec), unit, _fmt(reach_mine))
-    if rec["spend"] > mine["spend"] and kind in ("tradeoff", "better", "tradeoff_reach") and current_ids:
+        headline = "Less overlap without losing reach: %s vs your %s, reaching %s %s vs %s." % (
+            _pct(rate_rec), _pct(rate_mine), _fmt(reach_rec), unit, _fmt(reach_mine))
+    if rec["spend"] > mine["spend"] and kind in ("tradeoff", "better", "tradeoff_reach", "negligible") and current_ids:
         reasons.append("Uses $%s more of the budget than your roster ($%s vs $%s)." % (
             format(round(rec["spend"] - mine["spend"]), ","), format(round(rec["spend"]), ","), format(round(mine["spend"]), ",")))
     confidence = "measured" if not evidence_mix else "none"

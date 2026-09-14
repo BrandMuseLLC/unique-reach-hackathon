@@ -14,7 +14,8 @@ export type GlanceInput = {
 
 const compact = (value: number) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 const whole = (value: number) => Math.round(value).toLocaleString('en-US');
-const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
+// Overlap in these samples is often well under 1%; one decimal would make 0.09% and 0.19% both read "0.1%".
+const pct = (value: number) => `${(value * 100).toFixed(value > 0 && value < 0.01 ? 2 : 1)}%`;
 const money = (value: number) => value.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
 type Tip = { x: number; y: number; text: string } | null;
@@ -221,7 +222,8 @@ export function Glance({ result, creatorCount, onExplain }: { result: GlanceInpu
   const mine = { reached: useCountUp(cur.coverage), overlap: useCountUp(cur.sharedRate * 1000) / 1000, spent: useCountUp(cur.spend), count: useCountUp(cur.ids.length, 600) };
   if (!diag) return null;
   const scale = Math.max(rec.sharedRate, cur.sharedRate, 0.001) * 1.15;
-  const points = (value: number) => (value * 100).toFixed(1);
+  const points = (value: number) => (value * 100).toFixed(value > 0 && value < 0.01 ? 2 : 1);
+  const sharedLine = (d: RosterDiag) => `${cross ? '≈' : ''}${whole(d.shared)} of ${whole(d.standalone)} ${cross ? 'followers' : 'commenters'} shared`;
   const sentence = cur.ids.length === 0
     ? `The recommended roster has ${points(rec.sharedRate)}% repeated commenter memberships. Tick creators below to compare your own roster.`
     : rec.sharedRate < cur.sharedRate - 0.0005
@@ -239,12 +241,12 @@ export function Glance({ result, creatorCount, onExplain }: { result: GlanceInpu
         <div className="hero-metric-copy">
           <span className="hero-label">{cross ? 'Estimated audience overlap' : 'Audience overlap'} <em>lower is better</em></span>
           <div className="hero-values">
-            <div className={`hv plan ${assumed ? 'assumed' : ''}`}><em>Recommended{assumed ? ' · assumed' : ''}</em><strong>{assumed ? '≈' : ''}{pct(overlap)}</strong></div>
-            <div className={`hv mine ${assumed ? 'assumed' : ''}`}><em>Your roster</em><strong>{assumed && cur.ids.length > 1 ? '≈' : ''}{pct(mine.overlap)}</strong></div>
+            <div className={`hv plan ${assumed ? 'assumed' : ''}`}><em>Recommended{assumed ? ' · assumed' : ''}</em><strong>{assumed ? '≈' : ''}{pct(overlap)}</strong><small>{sharedLine(rec)}</small></div>
+            <div className={`hv mine ${assumed ? 'assumed' : ''}`}><em>Your roster</em><strong>{assumed && cur.ids.length > 1 ? '≈' : ''}{pct(mine.overlap)}</strong>{cur.ids.length > 0 && <small>{sharedLine(cur)}</small>}</div>
           </div>
           {why ? (
             <div className={`why why-${why.kind}`}>
-              <span className="why-tag">{why.kind === 'tradeoff' ? 'Trade-off: more reach' : why.kind === 'tradeoff_reach' ? 'Trade-off: less reach' : why.kind === 'better' ? 'Better on both' : why.kind === 'same' ? 'Your roster wins' : 'How to compare'}</span>
+              <span className="why-tag">{why.kind === 'tradeoff' ? 'Trade-off: more reach' : why.kind === 'tradeoff_reach' ? 'Trade-off: less reach' : why.kind === 'better' ? 'Better on both' : why.kind === 'negligible' ? 'Overlap is negligible' : why.kind === 'same' ? 'Your roster wins' : 'How to compare'}</span>
               <p>{why.headline}</p>
               {why.reasons.length > 0 && <ul>{why.reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
             </div>
