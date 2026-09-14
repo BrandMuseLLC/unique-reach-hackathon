@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 
 type RosterDiag = { ids: string[]; spend: number; coverage: number; standalone: number; shared: number; sharedRate: number };
 type Step = { creatorId: string; creatorName: string; marginalProxyReach: number; cost: number };
-type LeftOut = { creatorId: string; creatorName: string; alreadyCoveredShare: number; overlapsWith: { creatorName: string }[] };
+type LeftOut = { creatorId: string; creatorName: string; alreadyCoveredShare: number; overlapsWith: { creatorName: string; sharedCommenters?: number }[]; reason?: string; cost?: number };
 
 export type GlanceInput = {
   budget: number;
@@ -110,7 +110,7 @@ function MarginalPicks({ steps }: { steps: Step[] }) {
   return (
     <div className="chart-card rise">
       <h3>What each pick adds</h3>
-      <p>Reach score each creator adds, in the order the plan picked them. Bars shrink as audiences start to overlap.</p>
+      <p>New commenters each creator adds, in the order the plan picked them. Bars shrink as audiences start to overlap.</p>
       <svg viewBox={`0 0 ${width + 4} ${h + top + 34}`} role="img" aria-label="Marginal score added by each selected creator in pick order">
         {[0.5, 1].map((t) => <line key={t} x1={0} x2={width} y1={top + h - h * t} y2={top + h - h * t} stroke="var(--bm-grid)" />)}
         <line x1={0} x2={width} y1={top + h} y2={top + h} stroke="var(--bm-border)" />
@@ -137,32 +137,65 @@ function MarginalPicks({ steps }: { steps: Step[] }) {
   );
 }
 
+const REASONS: [RegExp, string, string][] = [
+  [/budget/i, 'Over budget', 'budget'],
+  [/excluded/i, 'Excluded', 'excluded'],
+  [/cap/i, 'Topic cap', 'cap'],
+  [/.*/, 'Adds little', 'little'],
+];
+
+function reasonTag(reason = '') {
+  const [, label, kind] = REASONS.find(([pattern]) => pattern.test(reason))!;
+  return { label, kind };
+}
+
 export function AlreadyCovered({ rows }: { rows: LeftOut[] }) {
-  const { show, hide, node } = useTip();
-  const top = rows.slice(0, 7);
-  if (!top.length) return null;
-  const left = 120, width = 250, rowH = 26;
+  const [showAll, setShowAll] = useState(false);
+  if (!rows.length) return null;
+  const sorted = [...rows].sort((a, b) => b.alreadyCoveredShare - a.alreadyCoveredShare || a.creatorName.localeCompare(b.creatorName));
+  const overlapping = sorted.filter((r) => r.alreadyCoveredShare >= 0.005);
+  const visible = showAll ? sorted : sorted.slice(0, 6);
+  const scale = Math.max(...sorted.map((r) => r.alreadyCoveredShare), 0.01);
+  const counts = sorted.reduce<Record<string, number>>((acc, r) => { const { label } = reasonTag(r.reason); acc[label] = (acc[label] ?? 0) + 1; return acc; }, {});
+
   return (
-    <div className="chart-card rise">
-      <h3>How much of each skipped creator is already reached</h3>
-      <p>Longer bar = more of that creator&rsquo;s commenters already come through the recommended roster.</p>
-      <svg viewBox={`0 0 ${left + width + 50} ${top.length * rowH + 4}`} role="img" aria-label="Already-covered share for creators left out of the plan">
-        {top.map((r, i) => {
-          const y = i * rowH + 4;
-          const w = Math.max(r.alreadyCoveredShare * width, 2);
-          const via = r.overlapsWith.slice(0, 2).map((o) => o.creatorName).join(', ');
+    <div className="left-out rise">
+      <div className="left-out-head">
+        <div>
+          <h3>Why creators were left out</h3>
+          <p>{overlapping.length
+            ? `${overlapping.length} of ${sorted.length} skipped ${sorted.length === 1 ? 'creator shares' : 'creators share'} part of their audience with the plan. Bars show how much is already reached.`
+            : sorted.length === 1
+              ? 'This creator doesn\u2019t share audience with the plan, so overlap wasn\u2019t the reason. The tag shows why.'
+              : `None of the ${sorted.length} skipped creators share audience with the plan, so overlap wasn\u2019t the reason. The tags show why.`}</p>
+        </div>
+        <div className="left-out-summary">
+          {Object.entries(counts).map(([label, n]) => <span key={label} className={`tag tag-${reasonTag(label === 'Adds little' ? '' : label).kind}`}>{label} · {n}</span>)}
+        </div>
+      </div>
+      <ul className="left-out-list">
+        {visible.map((r, i) => {
+          const share = r.alreadyCoveredShare;
+          const tag = reasonTag(r.reason);
+          const via = r.overlapsWith.slice(0, 2).map((o) => o.creatorName).join(' and ');
           return (
-            <g key={r.creatorId} onMouseMove={(e) => show(e, `${r.creatorName}: ${pct(r.alreadyCoveredShare)} covered${via ? ` via ${via}` : ''}`)} onMouseLeave={hide}>
-              <rect className="hit" x={0} y={y - 3} width={left + width + 50} height={rowH} />
-              <text x={left - 8} y={y + 12} textAnchor="end">{r.creatorName.length > 18 ? `${r.creatorName.slice(0, 17)}…` : r.creatorName}</text>
-              <rect x={left} y={y} width={width} height={16} rx={4} fill="var(--bm-grid)" />
-              <rect className="mark grow-x" style={{ animationDelay: `${i * 60}ms` }} x={left} y={y} width={w} height={16} rx={4} fill="var(--bm-chart-recommended)" />
-              <text className="value fade-in" style={{ animationDelay: `${250 + i * 60}ms` }} x={left + width + 8} y={y + 12}>{Math.round(r.alreadyCoveredShare * 100)}%</text>
-            </g>
+            <li key={r.creatorId} style={{ animationDelay: `${i * 40}ms` }}>
+              <div className="lo-name">
+                <strong title={r.creatorName}>{r.creatorName}</strong>
+                <small>{share >= 0.005 && via ? `Overlaps with ${via}` : 'No shared commenters with the plan'}</small>
+              </div>
+              <div className="lo-bar" aria-hidden="true">
+                <i className="grow-x" style={{ width: share >= 0.005 ? `${Math.max((share / scale) * 100, 4)}%` : '0%', animationDelay: `${i * 40}ms` }} />
+              </div>
+              <span className={`lo-value ${share < 0.005 ? 'zero' : ''}`}>{share < 0.005 ? '—' : `${Math.round(share * 100)}%`}</span>
+              <span className={`tag tag-${tag.kind}`}>{tag.label}</span>
+            </li>
           );
         })}
-      </svg>
-      {node}
+      </ul>
+      {sorted.length > 6 && (
+        <button className="btn-ghost left-out-more" onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show fewer' : `Show all ${sorted.length}`}</button>
+      )}
     </div>
   );
 }

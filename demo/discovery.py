@@ -16,10 +16,11 @@ from pathlib import Path
 from collect import aggregate, youtube
 
 if __package__:
-    from . import llm
+    from . import llm, upriver
     from .engine import PlanError
 else:
     import llm
+    import upriver
     from engine import PlanError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,7 +77,7 @@ def status(job_id):
         return dict(job) if job else None
 
 
-def start(prompt, keys, restricted=None, transport=None):
+def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=False):
     prompt = (prompt or "").strip()
     if not 3 <= len(prompt) <= 300:
         raise PlanError("Describe the campaign in 3-300 characters.")
@@ -89,12 +90,38 @@ def start(prompt, keys, restricted=None, transport=None):
         _jobs[job_id] = {"id": job_id, "prompt": prompt, "status": "running", "step": "plan", "progress": 0.02,
                          "message": "Understanding your brief", "dataset_id": None, "error": None, "units": 0}
     _running.set()
-    thread = threading.Thread(target=_run, args=(job_id, prompt, keys, restricted or set(), transport), daemon=True)
+    thread = threading.Thread(target=_run, args=(job_id, prompt, keys, restricted or set(), transport, expand_with_upriver), daemon=True)
     thread.start()
     return job_id
 
 
-def _run(job_id, prompt, keys, restricted, transport):
+def _lookalikes(client, anchors, known, upriver_transport=None):
+    """Upriver similar YouTube channels for a few anchors, resolved to YouTube channel records."""
+    ids, handles, spent, notes = [], [], 0, []
+    for anchor in anchors:
+        try:
+            result = upriver.similar("https://www.youtube.com/channel/%s" % anchor, platforms=["youtube"], limit=10, transport=upriver_transport)
+        except PlanError as exc:
+            notes.append(str(exc))
+            break
+        spent += result["creditsCharged"]
+        for row in result["results"]:
+            url = row.get("url") or ""
+            if "/channel/" in url:
+                cid = url.split("/channel/")[1].split("/")[0].split("?")[0]
+                if cid not in known:
+                    ids.append(cid)
+            elif row.get("handle"):
+                handles.append(row["handle"] if str(row["handle"]).startswith("@") else "@" + str(row["handle"]))
+    items = []
+    for start_at in range(0, len(ids), 50):
+        items += client.get("channels", part="snippet,statistics,contentDetails", id=",".join(ids[start_at:start_at + 50])).get("items", [])
+    for handle in handles[:10]:
+        items += client.get("channels", part="snippet,statistics,contentDetails", forHandle=handle).get("items", [])
+    return [i for i in items if i["id"] not in known], spent, notes
+
+
+def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False, upriver_transport=None):
     try:
         ANALYSES.mkdir(parents=True, exist_ok=True)
         plan = plan_search(prompt)
@@ -123,6 +150,22 @@ def _run(job_id, prompt, keys, restricted, transport):
                     continue  # a restricted brand's own channel never enters the pool
                 if subs >= MIN_SUBSCRIBERS and int(stats.get("videoCount", 0)) >= VIDEOS_PER_CHANNEL:
                     candidates.append((found[item["id"]], subs, item))
+        lookalike_ids, upriver_credits = set(), 0
+        if expand_with_upriver and candidates:
+            _update(job_id, progress=0.18, message="Asking Upriver for lookalike creators")
+            anchors = sorted(candidates, key=lambda c: -c[1])[:2]
+            extra, upriver_credits, notes = _lookalikes(client, [a[2]["id"] for a in anchors], {c[2]["id"] for c in candidates}, upriver_transport)
+            for item in extra:
+                stats = item.get("statistics", {})
+                subs = 0 if stats.get("hiddenSubscriberCount") else int(stats.get("subscriberCount", 0))
+                label = "%s %s" % (item["snippet"].get("title", ""), item["snippet"].get("customUrl", ""))
+                if restricted and aggregate.restricted_match(label, {r.lower() for r in restricted}):
+                    continue
+                if subs >= MIN_SUBSCRIBERS and int(stats.get("videoCount", 0)) >= VIDEOS_PER_CHANNEL:
+                    candidates.append((anchors[0][0], subs, item))
+                    lookalike_ids.add(item["id"])
+            if notes:
+                _update(job_id, message="Upriver lookalikes skipped: %s" % notes[0])
         per_topic = {}
         for topic, subs, item in sorted(candidates, key=lambda c: -c[1]):
             per_topic.setdefault(topic, []).append(item)
@@ -185,6 +228,8 @@ def _run(job_id, prompt, keys, restricted, transport):
             raise PlanError("Too few creators had public comments to map overlap. Try a broader description.")
         agg["metadata"]["prompt"] = prompt
         agg["metadata"]["min_commenters"] = int(os.environ.get("DISCOVERY_MIN_COMMENTERS", "25"))
+        agg["metadata"]["upriver_lookalikes"] = sorted(lookalike_ids & {c["id"] for c in agg["creators"]})
+        agg["metadata"]["upriver_credits"] = upriver_credits
         agg["metadata"]["queries"] = [q for q, _ in plan["queries"]]
         (ANALYSES / (dataset_id + ".json")).write_text(json.dumps(agg))
         (ANALYSES / (dataset_id + ".report.json")).write_text(json.dumps(report))

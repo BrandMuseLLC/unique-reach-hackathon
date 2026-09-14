@@ -16,6 +16,7 @@ SECTIONS = {
     "overview": "Plan at a glance: the headline audience overlap % for your roster vs the recommended one, plus commenters reached, spend, creator count, and charts for overlap by roster and what each pick adds.",
     "creators": "Creators list: every creator with Recommended / left-out badges, filter tabs, editable quotes, require/exclude rules and per-creator details.",
     "map": "Audience map: clusters of creators whose commenters overlap, and shared-commenter counts for any pair.",
+    "platforms": "Beyond YouTube: Instagram and TikTok creators with a similar niche and audience to the plan's creators, from Upriver (modeled similarity, costs credits, not measured overlap).",
     "whynot": "Why not: a chart of how much of each left-out creator's audience the plan already reaches, and a picker for the full reason and which creators overlap it.",
 }
 

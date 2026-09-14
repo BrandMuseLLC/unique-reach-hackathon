@@ -216,13 +216,35 @@ class Planner:
                 best[i] = max(best.get(i, 0), self.weight(c, ctx))
         return self.summarize(selected, ctx)
 
-    def optimize(self, request):
+    def feasible(self, ids, ctx):
+        """True when a roster respects budget, exclusions, requirements, topic caps and any creator-count target."""
+        if not ids or len(set(ids)) != len(ids) or any(i not in self.by_id or i in ctx["exclude"] for i in ids):
+            return False
+        if not set(ctx["must_include"]) <= set(ids) or sum(ctx["costs"][i] for i in ids) > ctx["budget"] + 1e-8:
+            return False
+        if ctx.get("creator_count") and len(ids) > ctx["creator_count"]:
+            return False
+        return all(sum(self.by_id[i]["community"] == group for i in ids) <= cap for group, cap in ctx["max_per_group"].items())
+
+    def optimize(self, request, candidates=(), force_candidate=False):
         ctx = self.context(request)
         runs = {mode: self.run(ctx, mode) for mode in ("ratio", "gain", "subscribers", "views")}
+        # Rosters the user already has in mind compete too, so the planner never recommends something worse than them.
+        for n, ids in enumerate(candidates):
+            ids = list(dict.fromkeys(ids))
+            if self.feasible(ids, ctx):
+                runs["candidate_%d" % n] = self.summarize(ids, ctx)
+        if force_candidate and "candidate_0" in runs:
+            winner = "candidate_0"
+            target = ctx.get("creator_count", 0)
+            return self._finish(ctx, runs, winner)
         target = ctx.get("creator_count", 0)
         # With a creator-count target, prefer heuristics that actually reach it; fall back to the best available.
         pool = [k for k in runs if not target or len(runs[k]["selected"]) >= target] or list(runs)
         winner = max(pool, key=lambda k: (min(len(runs[k]["selected"]), target) if target else 0, runs[k]["reach_est"], -runs[k]["spend"]))
+        return self._finish(ctx, runs, winner)
+
+    def _finish(self, ctx, runs, winner):
         result = dict(runs[winner])
         best = self.coverage(result["selected"], ctx)
         rejected = []

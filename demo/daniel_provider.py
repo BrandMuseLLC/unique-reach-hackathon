@@ -84,6 +84,7 @@ class RealDataProvider:
                          'baseCost':int(c['cost']),'costBasis':'Hypothetical case-study quote; editable, not a researched rate.',
                          'commenterCount':c['commenter_count'],'videoCount':c.get('video_count'),
                          'sponsorMentions':c.get('sponsor_mentions'),
+                         'foundBy':'upriver' if c['id'] in set(self.planner.metadata.get('upriver_lookalikes',[])) else 'youtube_search',
                          'creatorCountry':c.get('creator_country'),'audioLanguages':c.get('audio_languages'),
                          'sourceUrl':self.planner.metadata.get('source_url')})
         budget,roster=self.default_scenario()
@@ -94,6 +95,58 @@ class RealDataProvider:
                 'defaultBudget':budget,'defaultRosterBasis':self.default_roster_basis,'provenance':self.public_provenance(),
                 'evidence':{'medianSampledCommenters':median_sample,'eligibleCreators':len(self.eligible),'thinCreators':len(self.thin),
                             'strength':'strong' if median_sample>=300 else 'moderate' if median_sample>=100 else 'thin'}}
+
+    def _least_overlap(self, ctx, current, plan, passes=3):
+        """Lowest-overlap feasible roster whose reach is at least the user's roster (or the max-reach plan when theirs doesn't fit).
+
+        Local search over add / drop / swap moves from a few seeds. Reach uses the planning weights (observed commenters,
+        times any topic relevance); overlap is the unweighted share of repeated sampled commenter memberships.
+        """
+        p=self.planner
+        members={c['id']:c['commenters'] for c in p.creators}
+        standalone={cid:p.mass(ids) for cid,ids in members.items()}
+        weight={sid:p.masses.get(sid,1)*p.relevance(sid,ctx) for sid in p.segment_groups} if ctx['relevance'] else None
+        cache={}
+        def stats(ids):
+            k=frozenset(ids)
+            if k not in cache:
+                union=set().union(*(members[i] for i in k)) if k else set()
+                unique=p.mass(union)
+                naive=sum(standalone[i] for i in k)
+                reach=sum(weight[sid] for sid in union) if weight is not None else unique
+                cache[k]=(reach,(naive-unique)/naive if naive else 0.0,sum(ctx['costs'][i] for i in k))
+            return cache[k]
+        floor_ids=current if current and p.feasible(current,ctx) else plan['selected']
+        if not floor_ids:
+            return None
+        floor=stats(floor_ids)[0]-1e-6
+        target=ctx.get('creator_count',0)
+        min_size=min(target,len(plan['selected'])) if target else 1
+        pool=[c['id'] for c in p.creators if c['id'] in self.eligible and c['id'] not in ctx['exclude']]
+        def ok(ids):
+            return len(ids)>=min_size and p.feasible(ids,ctx) and stats(ids)[0]>=floor
+        def key(ids):
+            reach,overlap,spend=stats(ids)
+            return (round(overlap,9),-reach,spend)
+        seeds={frozenset(ids):list(ids) for ids in [floor_ids,plan['selected']]+[r['selected'] for r in plan['baselines'].values()]}
+        best=None
+        for seed in seeds.values():
+            if not ok(seed):
+                continue
+            roster=list(seed)
+            for _ in range(passes):
+                fixed=set(ctx['must_include'])
+                moves=[[x for x in roster if x!=m] for m in roster if m not in fixed]
+                moves+=[roster+[c] for c in pool if c not in roster]
+                moves+=[[x for x in roster if x!=m]+[c] for m in roster if m not in fixed for c in pool if c not in roster]
+                candidates=[ids for ids in moves if ok(ids)]
+                step=min(candidates,key=key,default=None)
+                if step is None or key(step)>=key(roster):
+                    break
+                roster=step
+            if best is None or key(roster)<key(best):
+                best=roster
+        return best
 
     def _count_gap(self, ctx, plan):
         """Plain-language reasons a creator-count target was missed, plus the budget that would fit the reachable count."""
@@ -239,15 +292,19 @@ class RealDataProvider:
         planning=request.get('planningContext',{})
         if not isinstance(planning,dict) or set(planning)-{'brandDescription','relevance','maxPerGroup','creatorCount'}:
             raise PlanError('Unsupported planning context.')
-        ctx=self.planner.context({'budget':budget,'objective':'viewer_proxy','must_include':required,'exclude':campaign_excluded,'costs':costs,
+        # Optimize the same measured quantity the page shows: unique sampled commenters reached.
+        ctx=self.planner.context({'budget':budget,'objective':'observed_commenters','must_include':required,'exclude':campaign_excluded,'costs':costs,
                                  'brand_description':planning.get('brandDescription',''),'relevance':planning.get('relevance',{}),'max_per_group':planning.get('maxPerGroup',{}),
                                  'creator_count':planning.get('creatorCount',0)})
         if ctx['relevance'] and set(ctx['relevance'])!={c['community'] for c in self.planner.creators}:
             raise PlanError('Relevance must cover every topic.')
-        plan=self.planner.optimize(ctx)
+        plan=self.planner.optimize(ctx, candidates=[current])
+        best=self._least_overlap(ctx, current, plan)
+        if best is not None and set(best)!=set(plan['selected']):
+            plan=self.planner.optimize(ctx, candidates=[best], force_candidate=True)
         steps=[{'creatorId':t['id'],'creatorName':t['name'],'marginalProxyReach':round(t['marginal_gain'],2),'cost':t['cost'],
                 'reason':('%s required by the campaign; '%t['name'] if t['required'] else '%s selected; '%t['name'])+
-                         'adds %.2f uncalibrated score at this step after modeled overlap.'%t['marginal_gain']} for t in plan['trace']]
+                         'adds %d new sampled commenters not already reached.'%round(t['marginal_gain'])} for t in plan['trace']]
         why_not=[{'creatorId':r['id'],'creatorName':r['name'],'reason':r['reason'],'cost':ctx['costs'][r['id']],
                   'marginalProxyReach':round(r['marginal_gain'],2),'alreadyCoveredShare':round(r['represented_fraction'],4),
                   'overlapsWith':[{'creatorId':o['id'],'creatorName':o['name'],'sharedCommenters':round(o['shared_commenters'])} for o in r['overlaps_with']]}

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from demo.daniel_provider import RealDataProvider
 from demo.engine import PlanError
-from demo import ai, ai_explain, ai_labels, assistant, discovery
+from demo import ai, ai_explain, ai_labels, assistant, discovery, upriver
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
@@ -279,6 +279,13 @@ class ActivateRequest(BaseModel):
 class DiscoverRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     prompt: str = Field(min_length=3, max_length=300)
+    expandWithUpriver: bool = False
+
+
+class SimilarRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    creatorIds: list[str] = Field(min_length=1, max_length=3)
+    platforms: list[str] = Field(default_factory=lambda: ['instagram', 'tiktok'], min_length=1, max_length=3)
 
 
 class AssistantRequest(BaseModel):
@@ -330,10 +337,46 @@ def start_discovery(request: DiscoverRequest, _: AuthenticatedUser = Depends(use
     if not canonical_ai_status()['enabled']:
         return JSONResponse(status_code=503, content={'error': 'Creator search needs live AI to be configured.'})
     try:
-        job_id = discovery.start(request.prompt, os.environ.get('YOUTUBE_API_KEYS', '').split(','), restricted_names())
+        if request.expandWithUpriver and not upriver.status()['configured']:
+            raise PlanError('Add UPRIVER_API_KEY to the server .env to use Upriver lookalikes.')
+        job_id = discovery.start(request.prompt, os.environ.get('YOUTUBE_API_KEYS', '').split(','), restricted_names(),
+                                 expand_with_upriver=request.expandWithUpriver)
     except PlanError as exc:
         return JSONResponse(status_code=400, content={'error': str(exc)})
     return {'job': discovery.status(job_id)}
+
+
+@app.get('/api/upriver/status')
+def upriver_status(_: AuthenticatedUser = Depends(user_dependency)):
+    return upriver.status()
+
+
+@app.post('/api/upriver/similar')
+def upriver_similar(request: SimilarRequest, _: AuthenticatedUser = Depends(user_dependency)):
+    if real_provider is None:
+        return JSONResponse(status_code=400, content={'error': 'Load a creator dataset first.'})
+    unknown = [cid for cid in request.creatorIds if cid not in real_provider.planner.by_id]
+    if unknown:
+        return JSONResponse(status_code=400, content={'error': 'Unknown creators.'})
+    platforms = [p for p in request.platforms if p in upriver.PLATFORMS]
+    groups, charged, restricted = [], 0, {r.lower() for r in restricted_names()}
+    from collect.aggregate import restricted_match
+    for cid in request.creatorIds:
+        anchor = real_provider.planner.by_id[cid]
+        url = 'https://www.youtube.com/channel/%s' % cid if cid.startswith('UC') else (anchor.get('handle') and 'https://www.youtube.com/%s' % anchor['handle'])
+        if not url:
+            continue
+        try:
+            result = upriver.similar(url, platforms=platforms, limit=6)
+        except PlanError as exc:
+            if not groups:
+                return JSONResponse(status_code=400, content={'error': str(exc)})
+            break
+        charged += result['creditsCharged']
+        rows = [r for r in result['results'] if not restricted_match('%s %s' % (r.get('name') or '', r.get('handle') or ''), restricted)]
+        groups.append({'anchorId': cid, 'anchorName': anchor['name'], 'results': rows, 'incomplete': result['incomplete'], 'cached': result['cached']})
+    return {'groups': groups, 'creditsCharged': charged, 'status': upriver.status(),
+            'note': 'Upriver similarity is modeled niche and audience fit, not measured audience overlap.'}
 
 
 @app.get('/api/discover/{job_id}')

@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Check, ChevronRight, CircleHelp, LayoutGrid, Loader2, Map as MapIcon, MessageCircle, Search, Send, Sparkles, Users, X } from 'lucide-react';
+import { BarChart3, Check, ChevronRight, CircleHelp, ExternalLink, Globe, LayoutGrid, Loader2, Map as MapIcon, MessageCircle, Search, Send, Sparkles, Users, X } from 'lucide-react';
 import { Glance } from './Glance';
 import { ExploreOverlap } from './ExploreOverlap';
 import { WhyNotPanel, type WhyNot } from './WhyNotPanel';
 import whiteWordmark from '../brandmuse/assets/brand-muse-wordmark-white.jpg';
 
 type Creator = { id: string; name: string; category: string; estimatedViews: number; baseCost: number; eligibilityStatus: string;
-  sponsorMentions?: { brands: { brand: string }[] } | null; creatorCountry?: string | null };
+  sponsorMentions?: { brands: { brand: string }[] } | null; creatorCountry?: string | null; foundBy?: 'upriver' | 'youtube_search' };
+type Lookalike = { creatorId?: string; name: string; platform: string; handle?: string; url?: string; followers?: number | null; followerBucket?: string | null; score: number | null; otherChannels: { platform: string; handle?: string }[] };
+type LookalikeGroup = { anchorId: string; anchorName: string; results: Lookalike[]; incomplete: boolean; cached: boolean };
+type UpriverStatus = { configured: boolean; creditsReservedThisSession: number; creditCap: number; creditsRemaining: number };
 type Campaign = { id: string; name: string; category: string; audience: string };
 type RosterDiag = { ids: string[]; spend: number; coverage: number; standalone: number; shared: number; sharedRate: number };
 type Plan = {
@@ -31,6 +34,7 @@ const SECTIONS = [
   { id: 'overview', label: 'Overview', icon: LayoutGrid },
   { id: 'creators', label: 'Creators', icon: Users },
   { id: 'map', label: 'Audience map', icon: MapIcon },
+  { id: 'platforms', label: 'Beyond YouTube', icon: Globe },
   { id: 'whynot', label: 'Why not', icon: CircleHelp },
 ] as const;
 const STEPS = [['plan', 'Understanding brief'], ['search', 'Searching YouTube'], ['videos', 'Reading videos'], ['comments', 'Sampling comments'], ['build', 'Mapping overlap']] as const;
@@ -65,6 +69,11 @@ export function Studio() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [discoveryEnabled, setDiscoveryEnabled] = useState(false);
   const [prompt, setPrompt] = useState('');
+  const [upriverStatus, setUpriverStatus] = useState<UpriverStatus | null>(null);
+  const [useUpriver, setUseUpriver] = useState(false);
+  const [lookalikes, setLookalikes] = useState<LookalikeGroup[]>([]);
+  const [lookalikeBusy, setLookalikeBusy] = useState(false);
+  const [lookalikeNote, setLookalikeNote] = useState('');
   const [job, setJob] = useState<Job | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: 'assistant', text: 'Hi, I’m Muse. Ask me to change the plan ("less overlap", "drop a creator", "spend less"), explain a choice, or find where something is on the page.' }]);
   const [draft, setDraft] = useState('');
@@ -87,6 +96,7 @@ export function Studio() {
     void api<{ enabled: boolean }>('/api/ai/status').then((s) => setAiEnabled(s.enabled)).catch(() => setAiEnabled(false));
     void refreshDatasets();
     void loadDataset();
+    void api<UpriverStatus>('/api/upriver/status').then(setUpriverStatus).catch(() => setUpriverStatus(null));
   }, []);
   useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages, chatBusy]);
   useEffect(() => {
@@ -122,6 +132,8 @@ export function Studio() {
         costs: Object.fromEntries(payload.creators.map((c) => [c.id, c.baseCost])), planningContext: EMPTY };
       setInputs(next);
       setOpenRow('');
+      setLookalikes([]);
+      setLookalikeNote('');
       await runPlan(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load creators.');
@@ -199,7 +211,7 @@ export function Studio() {
     setError('');
     goTo('discover');
     try {
-      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim() });
+      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: useUpriver && Boolean(upriverStatus?.configured) });
       setJob(started.job);
       let failures = 0;
       const poll = async () => {
@@ -224,6 +236,23 @@ export function Studio() {
     } catch (e) {
       setJob(null);
       setError(e instanceof Error ? e.message : 'Creator search failed.');
+    }
+  }
+
+  async function findLookalikes() {
+    if (!plan) return;
+    setLookalikeBusy(true);
+    setLookalikeNote('');
+    try {
+      const payload = await api<{ groups: LookalikeGroup[]; creditsCharged: number; status: UpriverStatus; note: string }>(
+        '/api/upriver/similar', { creatorIds: plan.recommended.ids.slice(0, 3), platforms: ['instagram', 'tiktok'] });
+      setLookalikes(payload.groups);
+      setUpriverStatus(payload.status);
+      setLookalikeNote(`${payload.creditsCharged ? `Used about ${payload.creditsCharged} Upriver credits.` : 'Used saved results, no credits.'} ${payload.note}`);
+    } catch (e) {
+      setLookalikeNote(e instanceof Error ? e.message : 'Upriver lookup failed.');
+    } finally {
+      setLookalikeBusy(false);
     }
   }
 
@@ -312,6 +341,12 @@ export function Studio() {
                 {job?.status === 'running' ? <Loader2 className="spin" size={16} /> : <Search size={16} />}Find creators
               </button>
             </div>
+            {upriverStatus?.configured && (
+              <label className="hero-option">
+                <input type="checkbox" checked={useUpriver} onChange={(e) => setUseUpriver(e.target.checked)} disabled={job?.status === 'running'} />
+                Also add lookalike YouTube creators from Upriver <small>(up to ~48 credits · {upriverStatus.creditsRemaining} left this session)</small>
+              </label>
+            )}
             {!discoveryEnabled && <p className="hero-note">Creator search needs the YouTube and Gemini keys on the server. You can still plan with saved searches.</p>}
             {job && (
               <div className={`stepper ${job.status}`}>
@@ -412,7 +447,7 @@ export function Studio() {
                     <input type="checkbox" checked={inputs.currentRoster.includes(c.id)} aria-label={`${c.name} is in your roster`}
                       onChange={() => update({ currentRoster: inputs.currentRoster.includes(c.id) ? inputs.currentRoster.filter((x) => x !== c.id) : [...inputs.currentRoster, c.id] })} />
                     <span className="avatar">{c.name.replace(/^@/, '').slice(0, 1).toUpperCase()}</span>
-                    <div className="crow-name"><strong>{c.name}</strong><small>{c.category} · {compact(c.estimatedViews)} views</small></div>
+                    <div className="crow-name"><strong>{c.name}{c.foundBy === 'upriver' && <span className="found-by">Upriver lookalike</span>}</strong><small>{c.category} · {compact(c.estimatedViews)} views</small></div>
                     <span className={`badge b-${status}`}>
                       {status === 'recommended' ? 'In the plan' : status === 'required' ? 'Required' : status === 'excluded' ? 'Excluded'
                         : status === 'left' ? (why && Math.round(why.alreadyCoveredShare * 100) >= 1 ? `${Math.round(why.alreadyCoveredShare * 100)}% already reached` : 'Not picked') : ''}
@@ -449,6 +484,46 @@ export function Studio() {
 
         <section id="map" className={`stage-section ${flash === 'map' ? 'flash' : ''}`}>
           {creators.length > 0 && <ExploreOverlap key={campaign?.id} aiEnabled={aiEnabled} />}
+        </section>
+
+        <section id="platforms" className={`stage-section panel-lite ${flash === 'platforms' ? 'flash' : ''}`}>
+          <div className="section-head">
+            <div>
+              <h2>Beyond YouTube</h2>
+              <p>Creators on Instagram and TikTok with a similar niche and audience to the ones in your plan, from Upriver. This is modeled similarity, not measured overlap.</p>
+            </div>
+            <button className="btn-primary" disabled={!upriverStatus?.configured || lookalikeBusy || !plan?.recommended.ids.length} onClick={() => void findLookalikes()}>
+              {lookalikeBusy ? <Loader2 className="spin" size={16} /> : <Globe size={16} />}Find on Instagram &amp; TikTok
+            </button>
+          </div>
+          <p className="muted-line">
+            {!upriverStatus?.configured ? 'Add UPRIVER_API_KEY to the server .env to turn this on.'
+              : `Looks up the top ${Math.min(plan?.recommended.ids.length ?? 0, 3)} creators in the plan · about ${Math.min(plan?.recommended.ids.length ?? 0, 3) * 16} credits · ${upriverStatus.creditsRemaining} of ${upriverStatus.creditCap} left this session · repeat lookups are free`}
+          </p>
+          {lookalikeNote && <p className="notice">{lookalikeNote}</p>}
+          {lookalikes.map((g) => (
+            <div className="look-group" key={g.anchorId}>
+              <h3>Like <strong>{g.anchorName}</strong>{g.cached && <small> · saved result</small>}</h3>
+              {g.results.length === 0 ? (
+                <p className="placeholder small">{g.incomplete ? 'Upriver ran out of time before finishing. Try again later.' : 'No similar Instagram or TikTok creators found.'}</p>
+              ) : (
+                <div className="look-grid">
+                  {g.results.map((r, i) => (
+                    <a className="look-card rise" style={{ animationDelay: `${i * 40}ms` }} key={`${r.platform}-${r.handle}-${i}`} href={r.url} target="_blank" rel="noreferrer noopener">
+                      <div className="look-top">
+                        <span className={`plat plat-${r.platform}`}>{r.platform === 'tiktok' ? 'TikTok' : r.platform === 'instagram' ? 'Instagram' : r.platform}</span>
+                        <ExternalLink size={13} />
+                      </div>
+                      <strong>{r.name}</strong>
+                      <small>{r.handle ? `@${String(r.handle).replace(/^@/, '')}` : ''}{r.followers ? ` · ${compact(r.followers)} followers` : r.followerBucket ? ` · ${r.followerBucket.replace(/_/g, '–')} followers` : ''}</small>
+                      {r.score !== null && <div className="look-score"><i style={{ width: `${Math.round(r.score * 100)}%` }} /><span>{Math.round(r.score * 100)}% similar</span></div>}
+                      {r.otherChannels.length > 0 && <small className="muted">Also on {r.otherChannels.map((o) => o.platform).join(', ')}</small>}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
         </section>
 
         <section id="whynot" className={`stage-section ${flash === 'whynot' ? 'flash' : ''}`}>
