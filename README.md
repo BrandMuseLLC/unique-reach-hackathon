@@ -2,6 +2,10 @@
 
 A hackathon prototype by BrandMuse for planning YouTube creator sponsorship rosters with budget constraints and overlap-aware comparisons.
 
+## Final technical write-up
+
+Read the [final technical write-up](docs/final-technical-writeup.md) for the implementation, methodology, verification, limitations, and next steps. It documents source checkpoint `480a9ae` and the progression across the submitted demos.
+
 ## First progress update
 
 Today we built a roster editor, editable budgets and hypothetical creator quotes, an optimizer with baseline comparisons, saved campaigns, and campaign-brief interpretation through Google Gemini. Our separate local research build also explores shared commenters in a historical public sample of 34 YouTube channels.
