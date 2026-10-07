@@ -122,3 +122,21 @@ def test_listed_social_creators_are_profiled_first_and_sized_from_upriver(tmp_pa
     assert len(mine) == 1 and mine[0]["followers"] == 42000 and mine[0]["name"] == "Latte Lab" and "audience" in mine[0]
     assert sum(1 for e in block["external"] if e["url"].rstrip("/") == "https://www.instagram.com/latte.lab") == 1  # the search duplicate was skipped
     assert any("latte.lab" in u for u in looked_up)
+
+
+def test_list_runs_can_skip_vendor_lookalikes(tmp_path, monkeypatch):
+    from collect.tests.test_studio import _upriver_env
+    _upriver_env(tmp_path, monkeypatch, cap="1000")
+    monkeypatch.setenv("ROSTER_SEARCH_LOOKALIKES", "false")
+    calls = []
+
+    def transport(req):
+        calls.append(req.full_url)
+        return {"channels": [{"platform": "tiktok", "handle": "beanqueen", "display_name": "Bean Queen", "url": "https://www.tiktok.com/@beanqueen", "follower_count": 9000}],
+                "audience": {"status": "limited_coverage"}}
+
+    discovery._jobs["cpn"] = {"id": "cpn", "status": "running"}
+    _, externals = discovery.split_roster(["tiktok:@beanqueen"])
+    block = discovery._crossplatform("cpn", {"metadata": {}, "creators": [], "audience_segments": []}, {"category": "Coffee", "campaign_name": "Coffee", "queries": []}, set(), transport, explicit=externals)
+    assert not any(u.endswith("/creators/search") or u.endswith("/categories/search") for u in calls)
+    assert [e["handle"] for e in block["external"]] == ["beanqueen"] and block["external"][0]["followers"] == 9000

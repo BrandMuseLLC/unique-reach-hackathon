@@ -93,9 +93,11 @@ def _crossplatform(job_id, agg, plan, restricted, upriver_transport=None, explic
         external.append(dict(row))
     listed = {e["url"].rstrip("/").lower() for e in external}
     categories = [plan.get("category") or plan["campaign_name"]]
-    ids = upriver.category_ids(plan.get("category") or plan["campaign_name"], transport=upriver_transport)  # free
+    # A user's list can opt out of vendor-found lookalikes (ROSTER_SEARCH_LOOKALIKES=false): only listed creators are profiled.
+    search = not (explicit is not None and os.environ.get("ROSTER_SEARCH_LOOKALIKES", "true").strip().lower() in ("false", "0", "no"))
+    ids = upriver.category_ids(plan.get("category") or plan["campaign_name"], transport=upriver_transport) if search else []  # free
     query = plan["queries"][0][0] if plan.get("queries") else plan["campaign_name"]
-    for platform in ("instagram", "tiktok"):
+    for platform in ("instagram", "tiktok") if search else ():
         if spent + upriver.estimate(5) > SEARCH_CREDIT_BUDGET:
             break
         try:
