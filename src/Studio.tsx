@@ -17,6 +17,7 @@ type Delta = { subject: 'plan' | 'roster'; added: string[]; removed: string[]; p
 type UpriverStatus = { configured: boolean; creditsReservedThisSession: number; creditCap: number; creditsRemaining: number };
 
 const EMPTY = { brandDescription: '', relevance: {}, maxPerGroup: {}, creatorCount: 0 };
+const DEFAULT_CREATORS = 10;
 const NAV: { label: string; icon: typeof Home; screen: Screen; anchor?: string }[] = [
   { label: 'Overview', icon: Home, screen: 'overview' },
   { label: 'Creators', icon: Users, screen: 'creators' },
@@ -44,7 +45,7 @@ export function parseRoster(text: string): RosterItem[] {
     if (!line) continue;
     const cells = line.split(/[,\t;]/).map((c) => c.trim().replace(/^"|"$/g, ''));
     const handle = cells[0];
-    if (!handle || /^(handle|channel|creator|url|name|youtube)s?$/i.test(handle)) continue;  // header row
+    if (!handle || /^(handle|channel|creator|url|link|name|youtube|platform|profile)s?$/i.test(handle)) continue;  // header row
     rows.push({ handle, topic: (cells[1] ?? '').slice(0, 60) });
   }
   return rows;
@@ -191,8 +192,14 @@ export function Studio() {
       plannedInputsRef.current = null;
       skipAuto.current = true;
       setCreators(payload.creators);
-      const next: Inputs = { budget: payload.defaultBudget ?? (payload.creators.every((c) => c.source === 'synthetic') ? 139000 : 10000), currentRoster: payload.defaultCurrentRoster ?? [], include: [], exclude: [],
-        costs: Object.fromEntries(payload.creators.map((c) => [c.id, c.baseCost])), planningContext: EMPTY };
+      // Default plan size is ten creators (or the whole pool when smaller); the budget stretches to fit ten typical quotes.
+      const quotes = payload.creators.filter((c) => c.eligibilityStatus !== 'ineligible').map((c) => c.baseCost).sort((a, b) => a - b);
+      const count = Math.min(DEFAULT_CREATORS, quotes.length);
+      const middle = Math.max(Math.floor((quotes.length - count) / 2), 0);
+      const typical = quotes.slice(middle, middle + count).reduce((s, q) => s + q, 0);
+      const base = payload.defaultBudget ?? (payload.creators.every((c) => c.source === 'synthetic') ? 139000 : 10000);
+      const next: Inputs = { budget: Math.max(base, Math.ceil(typical / 250) * 250), currentRoster: payload.defaultCurrentRoster ?? [], include: [], exclude: [],
+        costs: Object.fromEntries(payload.creators.map((c) => [c.id, c.baseCost])), planningContext: { ...EMPTY, creatorCount: count } };
       setInputs(next);
       await runPlan(next);
     } catch (e) {
@@ -336,7 +343,7 @@ export function Studio() {
     setError('');
     navigate('overview');
     try {
-      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: false, crossPlatform: Boolean(upriverStatus?.configured) && !roster,
+      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: false, crossPlatform: Boolean(upriverStatus?.configured),
         ...(roster ? { roster } : {}) });
       setJob(started.job);
       if (roster) setChatBusy(true);

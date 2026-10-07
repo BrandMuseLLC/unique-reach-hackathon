@@ -78,7 +78,8 @@ def explain(plan, question, transport=None):
     body = json.dumps({"question": question, "evidence": facts})
     if provider == "anthropic":
         url = "https://api.anthropic.com/v1/messages"
-        payload = {"model": model, "max_tokens": 400, "system": SYSTEM, "messages": [{"role": "user", "content": body}]}
+        # Thinking tokens count toward max_tokens on current Claude models, so leave room beyond the short answer.
+        payload = {"model": model, "max_tokens": 4000, "output_config": {"effort": "low"}, "system": SYSTEM, "messages": [{"role": "user", "content": body}]}
         headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
     elif provider == "gemini":
         url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % model

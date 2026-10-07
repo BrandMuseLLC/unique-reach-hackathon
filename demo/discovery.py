@@ -80,10 +80,18 @@ def status(job_id):
 SEARCH_CREDIT_BUDGET = int(os.environ.get("CROSSPLATFORM_CREDIT_BUDGET", "200"))
 
 
-def _crossplatform(job_id, agg, plan, restricted, upriver_transport=None):
-    """Add Instagram/TikTok creators and audience profiles within a per-search credit budget."""
+def _crossplatform(job_id, agg, plan, restricted, upriver_transport=None, explicit=None):
+    """Add Instagram/TikTok creators and audience profiles within a per-search credit budget.
+
+    `explicit` creators come from the user's own list: they are profiled first and never filtered by the search budget order.
+    """
     spent, external, profiles, notes = 0, [], {}, []
     restricted_lower = {r.lower() for r in (restricted or set())}
+    for row in explicit or []:
+        if restricted_lower and aggregate.restricted_match("%s %s" % (row.get("name") or "", row.get("handle") or ""), restricted_lower):
+            continue
+        external.append(dict(row))
+    listed = {e["url"].rstrip("/").lower() for e in external}
     categories = [plan.get("category") or plan["campaign_name"]]
     ids = upriver.category_ids(plan.get("category") or plan["campaign_name"], transport=upriver_transport)  # free
     query = plan["queries"][0][0] if plan.get("queries") else plan["campaign_name"]
@@ -100,6 +108,8 @@ def _crossplatform(job_id, agg, plan, restricted, upriver_transport=None):
             label = "%s %s" % (row.get("name") or "", row.get("handle") or "")
             if not row.get("followers") or (restricted_lower and aggregate.restricted_match(label, restricted_lower)):
                 continue
+            if str(row.get("url") or "").rstrip("/").lower() in listed:
+                continue  # already in the user's list
             external.append({"id": "%s:%s" % (platform, str(row.get("handle") or row["url"]).lstrip("@").lower()), "name": row.get("name"),
                              "platform": platform, "handle": row.get("handle"), "url": row["url"], "followers": row["followers"],
                              "topic": plan.get("category") or "Creator"})
@@ -140,12 +150,20 @@ def _crossplatform(job_id, agg, plan, restricted, upriver_transport=None):
                     spent += result["creditsCharged"]
                     if owner.get("platform") in ("instagram", "tiktok"):
                         owner["audience"] = result["audience"]
+                        if not owner.get("followers") and result.get("followers"):
+                            owner["followers"] = result["followers"]  # a listed creator is sized from its Upriver profile
+                        if result.get("name") and owner.get("name") == owner.get("handle"):
+                            owner["name"] = result["name"]
                     else:
                         profiles[owner["id"]] = result["audience"]
                 _update(job_id, progress=0.94 + 0.05 * done / max(len(targets), 1),
                         message="Reading audience profiles (%d of %d%s)" % (done, len(targets), ", %d unavailable" % failed if failed else ""))
     if failed:
         notes.append("%d audience profiles were unavailable from Upriver; those creators' overlap is marked assumed." % failed)
+    unsized = [e for e in external if not e.get("followers")]
+    if unsized:
+        notes.append("Not sized by Upriver, so left out: %s." % ", ".join(e.get("handle") or e["url"] for e in unsized[:5]))
+        external = [e for e in external if e.get("followers")]
     return {"external": external, "profiles": profiles, "credits": spent, "notes": notes}
 
 
@@ -171,31 +189,68 @@ def normalize_handle(text):
     return ident if re.fullmatch(r"@[\w.-]{3,100}", ident) else None
 
 
+def social_handle(text):
+    """An Instagram or TikTok reference from a list row: (platform, handle, url), or None when it is not one."""
+    ident = (text or "").strip().strip('"').strip()
+    match = re.search(r"(instagram|tiktok)\.com/@?([\w.-]{2,60})", ident, re.IGNORECASE)
+    if not match:
+        match = re.fullmatch(r"(instagram|tiktok):\s*@?([\w.-]{2,60})", ident, re.IGNORECASE)
+    if not match:
+        return None
+    platform, handle = match.group(1).lower(), match.group(2).rstrip(".")
+    if handle.lower() in ("p", "reel", "reels", "explore", "stories", "video", "tag", "discover"):
+        return None
+    url = "https://www.instagram.com/%s/" % handle if platform == "instagram" else "https://www.tiktok.com/@%s" % handle
+    return platform, handle, url
+
+
 def normalize_roster(rows):
-    """(handle, topic) pairs from user input: deduplicated, bounded, with a default topic."""
-    seen, roster = set(), []
+    """(handle, topic) pairs for the YouTube channels in user input: deduplicated, bounded, with a default topic."""
+    return split_roster(rows)[0]
+
+
+def split_roster(rows):
+    """User list rows split into YouTube (handle, topic) pairs and Instagram/TikTok externals; both deduplicated and bounded."""
+    seen, roster, externals = set(), [], []
     for row in rows or []:
         if isinstance(row, (list, tuple)):
             handle, topic = (list(row) + ["", ""])[:2]
         else:
             handle, topic = row, ""
+        topic = (topic or "").strip()[:30].title() or ROSTER_TOPIC
+        social = social_handle(handle)
+        if social:
+            platform, name, url = social
+            if url.lower() not in seen:
+                seen.add(url.lower())
+                externals.append({"id": "%s:%s" % (platform, name.lower()), "platform": platform, "handle": name, "url": url, "name": name,
+                                  "followers": None, "topic": topic})
+            continue
         ident = normalize_handle(handle)
         if not ident or ident.lower() in seen:
             continue
         seen.add(ident.lower())
-        roster.append((ident, (topic or "").strip()[:30].title() or ROSTER_TOPIC))
-    if len(roster) > MAX_ROSTER:
-        raise PlanError("A creator list can hold at most %d channels." % MAX_ROSTER)
-    return roster
+        roster.append((ident, topic))
+    if len(roster) + len(externals) > MAX_ROSTER:
+        raise PlanError("A creator list can hold at most %d creators." % MAX_ROSTER)
+    return roster, externals
 
 
 def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=False, cross_platform=False, roster=None):
     prompt = (prompt or "").strip()
     if not 3 <= len(prompt) <= 300:
         raise PlanError("Describe the campaign in 3-300 characters.")
-    roster = normalize_roster(roster) if roster else None
-    if roster is not None and len(roster) < 2:
-        raise PlanError("A creator list needs at least two YouTube handles or channel URLs.")
+    externals = []
+    if roster:
+        roster, externals = split_roster(roster)
+        if len(roster) < 2:
+            raise PlanError("A creator list needs at least two YouTube handles or channel URLs; Instagram and TikTok rows ride along with them.")
+        if externals and not upriver.status()["configured"]:
+            raise PlanError("The list has Instagram or TikTok creators, which need UPRIVER_API_KEY on the server.")
+        if externals:
+            cross_platform = True
+    else:
+        roster = None
     if not [k for k in keys if k.strip()]:
         raise PlanError("YouTube API access is not configured on the server.")
     if _running.is_set():
@@ -205,7 +260,7 @@ def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=Fal
         _jobs[job_id] = {"id": job_id, "prompt": prompt, "status": "running", "step": "plan", "progress": 0.02,
                          "message": "Reading your creator list" if roster else "Understanding your brief", "dataset_id": None, "error": None, "units": 0}
     _running.set()
-    thread = threading.Thread(target=_run, args=(job_id, prompt, keys, restricted or set(), transport, expand_with_upriver, None, cross_platform, roster), daemon=True)
+    thread = threading.Thread(target=_run, args=(job_id, prompt, keys, restricted or set(), transport, expand_with_upriver, None, cross_platform, roster, externals), daemon=True)
     thread.start()
     return job_id
 
@@ -285,7 +340,7 @@ def _lookalikes(client, anchors, known, upriver_transport=None):
     return [i for i in items if i["id"] not in known], spent, notes
 
 
-def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False, upriver_transport=None, cross_platform=False, roster=None):
+def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False, upriver_transport=None, cross_platform=False, roster=None, externals=None):
     try:
         ANALYSES.mkdir(parents=True, exist_ok=True)
         missing = []
@@ -423,7 +478,7 @@ def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False,
         agg["metadata"]["upriver_credits"] = upriver_credits
         if cross_platform:
             _update(job_id, step="build", progress=0.92, message="Finding Instagram and TikTok creators with Upriver")
-            block = _crossplatform(job_id, agg, plan, restricted, upriver_transport)
+            block = _crossplatform(job_id, agg, plan, restricted, upriver_transport, explicit=externals)
             if block["external"]:
                 agg["crossplatform"] = block
                 agg["metadata"]["upriver_credits"] = upriver_credits + block["credits"]

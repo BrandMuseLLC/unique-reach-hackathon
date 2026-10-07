@@ -84,3 +84,39 @@ def test_roster_needs_two_resolvable_channels(tmp_path, monkeypatch):
     discovery._run("r2", "Coffee roster", ["k"], set(), transport, roster=[("@ghost", "X"), ("@phantom", "X")])
     job = discovery.status("r2")
     assert job["status"] == "error" and "Only 0 of the 2 creators" in job["error"]
+
+
+def test_split_roster_separates_instagram_and_tiktok_rows():
+    roster, externals = discovery.split_roster([("@crema", "Espresso"), ("https://www.instagram.com/latte.lab/", "Latte art"),
+                                                "tiktok: @beanqueen", "https://www.tiktok.com/@beanqueen/video/123", "https://www.instagram.com/p/abc123/"])
+    assert roster == [("@crema", "Espresso")]
+    assert [(e["platform"], e["handle"], e["topic"]) for e in externals] == [("instagram", "latte.lab", "Latte Art"), ("tiktok", "beanqueen", discovery.ROSTER_TOPIC)]
+    assert externals[0]["url"] == "https://www.instagram.com/latte.lab/" and externals[1]["url"] == "https://www.tiktok.com/@beanqueen"
+
+
+def test_listed_social_creators_are_profiled_first_and_sized_from_upriver(tmp_path, monkeypatch):
+    from collect.tests.test_studio import _upriver_env
+    _upriver_env(tmp_path, monkeypatch, cap="1000")
+    looked_up = []
+
+    def transport(req):
+        if req.full_url.endswith("/v1/categories/search"):
+            return {"matches": []}
+        if req.full_url.endswith("/v1/creators/search"):
+            sent = json.loads(req.data)
+            platform = sent["platforms"][0]
+            return {"results": [{"creator_id": "s", "channels": [{"platform": platform, "handle": "latte.lab" if platform == "instagram" else "other",
+                                                                   "url": "https://www.instagram.com/latte.lab/" if platform == "instagram" else "https://www.tiktok.com/@other",
+                                                                   "subscriber_count": 90000}]}]}
+        looked_up.append(req.full_url)
+        return {"channels": [{"platform": "instagram", "handle": "latte.lab", "display_name": "Latte Lab", "url": "https://www.instagram.com/latte.lab/", "follower_count": 42000}],
+                "audience": {"status": "limited_coverage", "gender": {"value": "female", "percentage": 61}}}
+
+    discovery._jobs["cpx"] = {"id": "cpx", "status": "running"}
+    _, externals = discovery.split_roster(["https://www.instagram.com/latte.lab/"])
+    block = discovery._crossplatform("cpx", {"metadata": {}, "creators": [], "audience_segments": []},
+                                     {"category": "Coffee", "campaign_name": "Coffee roster", "queries": []}, set(), transport, explicit=externals)
+    mine = [e for e in block["external"] if e["id"] == "instagram:latte.lab"]
+    assert len(mine) == 1 and mine[0]["followers"] == 42000 and mine[0]["name"] == "Latte Lab" and "audience" in mine[0]
+    assert sum(1 for e in block["external"] if e["url"].rstrip("/") == "https://www.instagram.com/latte.lab") == 1  # the search duplicate was skipped
+    assert any("latte.lab" in u for u in looked_up)
