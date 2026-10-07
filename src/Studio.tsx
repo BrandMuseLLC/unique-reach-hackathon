@@ -341,14 +341,20 @@ export function Studio() {
   }
 
   // A prompt searches YouTube; a prompt with a roster maps overlap for exactly the listed channels and reports back in Muse.
-  async function discover(text = prompt, roster?: RosterItem[]) {
+  async function discover(text = prompt, roster?: RosterItem[], reuse = true) {
     if (!text.trim()) return;
     if (!roster) setPrompt(text);
     setError('');
     navigate('overview');
     try {
       const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: false, crossPlatform: Boolean(upriverStatus?.configured),
-        ...(roster ? { roster } : {}) });
+        ...(roster ? { roster, reuse } : {}) });
+      if (started.job.status === 'done' && started.job.dataset_id) {
+        // The same list was mapped before: the server handed back the finished dataset.
+        await activate(started.job.dataset_id);
+        setMessages((m) => [...m, { role: 'assistant', text: `${started.job.message}. Say "rebuild" with the list attached if you want it collected again. ${aiEnabled ? 'Tell me how to change the recommendation: how many creators, someone to require or drop, less overlap.' : ''}`.trim(), section: 'overview' }]);
+        return;
+      }
       setJob(started.job);
       if (roster) setChatBusy(true);
       let failures = 0;
@@ -408,10 +414,10 @@ export function Studio() {
       setChatOpen(true);
       setDraft('');
       setMessages((m) => [...m, { role: 'user', text: ask, attachment: `${attachment.name} · ${attachment.roster.length} creators` },
-        { role: 'assistant', text: `Reading ${attachment.roster.length} creators from your list. I look up each channel, sample who comments on their recent videos and map where those audiences overlap. This takes a few minutes; progress is on the Overview.`, section: 'overview' }]);
+        { role: 'assistant', text: `Reading ${attachment.roster.length} creators from your list. If I have mapped this exact list before, it loads straight away; otherwise I look up each channel, sample who comments on their recent videos and map where those audiences overlap, which takes a few minutes with progress on the Overview.`, section: 'overview' }]);
       const roster = attachment.roster;
       setAttachment(null);
-      await discover(brief, roster);
+      await discover(brief, roster, !/\b(rebuild|re-?run|refresh|fresh|again|re-?collect)\b/i.test(message));
       return;
     }
     if (!message) return;

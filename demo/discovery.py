@@ -238,7 +238,38 @@ def split_roster(rows):
     return roster, externals
 
 
-def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=False, cross_platform=False, roster=None):
+def roster_key(roster, externals=None):
+    """The identity of a creator list: sorted, lower-case handles and profile URLs, independent of topics or row order."""
+    return sorted({h.lower() for h, _ in roster} | {e["url"].rstrip("/").lower() for e in (externals or [])})
+
+
+def find_saved(roster, externals, datasets):
+    """The newest dataset already built from exactly this list, so a repeat upload loads at once instead of re-collecting.
+
+    `datasets` maps dataset id to a JSON path (newest first). Older list datasets without a stored key are matched on the
+    channel handles they mapped plus the handles they reported missing.
+    """
+    wanted = roster_key(roster, externals)
+    for dataset_id, path in (datasets or {}).items():
+        try:
+            data = json.loads(Path(path).read_text())
+        except (OSError, ValueError):
+            continue
+        meta = data.get("metadata") or {}
+        listed = (meta.get("roster") or {}).get("listed")
+        if not meta.get("roster"):
+            continue
+        if listed is None:
+            handles = {"@" + str(c.get("handle") or "").lstrip("@").lower() for c in data.get("creators", []) if c.get("handle")}
+            handles |= {str(h).lower() for h in meta["roster"].get("missing", [])}
+            handles |= {str(e.get("url") or "").rstrip("/").lower() for e in (data.get("crossplatform") or {}).get("external", []) if e.get("url")}
+            listed = sorted(handles)
+        if [h.lower() for h in listed] == wanted:
+            return dataset_id, len(data.get("creators", [])) + len((data.get("crossplatform") or {}).get("external", []))
+    return None
+
+
+def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=False, cross_platform=False, roster=None, saved=None):
     prompt = (prompt or "").strip()
     if not 3 <= len(prompt) <= 300:
         raise PlanError("Describe the campaign in 3-300 characters.")
@@ -247,6 +278,15 @@ def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=Fal
         roster, externals = split_roster(roster)
         if len(roster) < 2:
             raise PlanError("A creator list needs at least two YouTube handles or channel URLs; Instagram and TikTok rows ride along with them.")
+        match = find_saved(roster, externals, saved) if saved else None
+        if match:
+            # The same list was mapped before: hand back the finished dataset instead of spending another collection run.
+            dataset_id, mapped = match
+            job_id = uuid.uuid4().hex[:12]
+            with _lock:
+                _jobs[job_id] = {"id": job_id, "prompt": prompt, "status": "done", "step": "done", "progress": 1.0, "dataset_id": dataset_id, "error": None,
+                                 "units": 0, "reused": True, "message": "Loaded the saved overlap map for this list (%d creators)" % mapped}
+            return job_id
         if externals and not upriver.status()["configured"]:
             raise PlanError("The list has Instagram or TikTok creators, which need UPRIVER_API_KEY on the server.")
         if externals:
@@ -475,6 +515,7 @@ def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False,
         if roster:
             # Channels that resolved but yielded no public comments never reach the planner; the list keeps their names and why.
             agg["metadata"]["roster"] = {"requested": len(roster) + len(externals or []), "found": len(chosen), "missing": missing,
+                                         "listed": roster_key(roster, externals),
                                          "skipped": [{"channel": s.get("channel"), "reason": s.get("reason")} for s in report.get("skipped_channels", [])]}
         # A searched pool can afford to set thin channels aside; a user's own list keeps every measurable channel on the board.
         agg["metadata"]["min_commenters"] = int(os.environ.get("ROSTER_MIN_COMMENTERS", "10")) if roster else int(os.environ.get("DISCOVERY_MIN_COMMENTERS", "25"))

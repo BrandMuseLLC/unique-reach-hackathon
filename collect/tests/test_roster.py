@@ -163,3 +163,29 @@ def test_muse_evidence_carries_overlap_and_falls_back_to_the_plan_summary():
     assert not ai_explain.grounded("That saves you $4,200.", facts, "how much overlap?")
     text = ai_explain.summary(plan)
     assert text.startswith("Recommended: 2 creators, 20.1% overlap, 1,123,457 reached") and "Your roster: 3 creators, 31.7% overlap" in text and text.endswith("Less overlap without losing reach.")
+
+
+def test_repeat_upload_of_the_same_list_reuses_the_saved_dataset(tmp_path):
+    newer = tmp_path / "coffee-2.json"
+    newer.write_text(json.dumps({"metadata": {"roster": {"listed": ["@crema", "@pour", "https://www.tiktok.com/@beanqueen"]}}, "creators": [{"id": "UC1"}, {"id": "UC2"}],
+                                 "crossplatform": {"external": [{"url": "https://www.tiktok.com/@beanqueen"}]}}))
+    legacy = tmp_path / "coffee-1.json"  # built before the list key was stored: matched on mapped handles plus missing ones
+    legacy.write_text(json.dumps({"metadata": {"roster": {"missing": ["@ghost"]}}, "creators": [{"id": "UC1", "handle": "@crema"}, {"id": "UC2", "handle": "Pour"}]}))
+    searched = tmp_path / "search.json"
+    searched.write_text(json.dumps({"metadata": {"prompt": "coffee"}, "creators": [{"id": "UC1", "handle": "@crema"}, {"id": "UC2", "handle": "@pour"}]}))
+    datasets = {"coffee-2": newer, "coffee-1": legacy, "search": searched}
+    roster, externals = discovery.split_roster([("@Pour", "Filter"), "@crema", "tiktok:beanqueen"])
+    assert discovery.find_saved(roster, externals, datasets) == ("coffee-2", 3)
+    roster, externals = discovery.split_roster(["@crema", "@pour", "@ghost"])
+    assert discovery.find_saved(roster, externals, datasets) == ("coffee-1", 2)
+    roster, externals = discovery.split_roster(["@crema", "@pour", "@newcomer"])
+    assert discovery.find_saved(roster, externals, datasets) is None
+
+
+def test_start_hands_back_a_finished_job_for_a_saved_list(tmp_path, monkeypatch):
+    saved = tmp_path / "coffee.json"
+    saved.write_text(json.dumps({"metadata": {"roster": {"listed": ["@crema", "@pour"]}}, "creators": [{"id": "UC1"}, {"id": "UC2"}]}))
+    monkeypatch.setattr(discovery._running, "is_set", lambda: False)
+    job_id = discovery.start("Coffee roster", ["k"], roster=[("@crema", ""), ("@pour", "")], saved={"coffee": saved})
+    job = discovery.status(job_id)
+    assert job["status"] == "done" and job["dataset_id"] == "coffee" and job["reused"] and "2 creators" in job["message"]

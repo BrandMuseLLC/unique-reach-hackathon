@@ -321,6 +321,8 @@ class DiscoverRequest(BaseModel):
     crossPlatform: bool = False
     # A creator list (YouTube handles, channel ids or URLs) skips the AI search and maps overlap for exactly these channels.
     roster: list[RosterItem] = Field(default_factory=list, max_length=60)
+    # When the same list was mapped before, load that dataset at once; false forces a fresh collection.
+    reuse: bool = True
 
 
 class ProfileRef(BaseModel):
@@ -395,7 +397,8 @@ def start_discovery(request: DiscoverRequest, _: AuthenticatedUser = Depends(use
             raise PlanError('Add UPRIVER_API_KEY to the server .env to use Upriver lookalikes.')
         job_id = discovery.start(request.prompt, os.environ.get('YOUTUBE_API_KEYS', '').split(','), restricted_names(),
                                  expand_with_upriver=request.expandWithUpriver, cross_platform=request.crossPlatform,
-                                 roster=[(r.handle, r.topic) for r in request.roster] or None)
+                                 roster=[(r.handle, r.topic) for r in request.roster] or None,
+                                 saved=dataset_files() if request.roster and request.reuse else None)
     except PlanError as exc:
         return JSONResponse(status_code=400, content={'error': str(exc)})
     return {'job': discovery.status(job_id)}
