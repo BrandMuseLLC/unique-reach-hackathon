@@ -22,10 +22,13 @@ def call_json(system, payload, schema, *, max_tokens=4000, transport=None, name=
     ai.reserve_call(wait=wait)
     body = json.dumps(payload)
     if provider == "anthropic":
+        # Current Claude models reject forced tool_choice; ask for the tool in the prompt and read the tool_use block back.
         url = "https://api.anthropic.com/v1/messages"
-        request_body = {"model": model, "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": body}],
+        request_body = {"model": model, "max_tokens": max(max_tokens, 8000), "output_config": {"effort": "low"},
+                        "system": system + "\n\nRespond only by calling the %s tool with the complete structured response. Do not answer in prose." % name,
+                        "messages": [{"role": "user", "content": body}],
                         "tools": [{"name": name, "description": "Return the structured response.", "input_schema": schema}],
-                        "tool_choice": {"type": "tool", "name": name}}
+                        "tool_choice": {"type": "auto", "disable_parallel_tool_use": True}}
         headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
     elif provider == "gemini":
         url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % model

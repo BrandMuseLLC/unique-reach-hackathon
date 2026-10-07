@@ -94,7 +94,9 @@ class RealDataProvider:
         median_sample=samples[len(samples)//2] if samples else 0
         return {'campaign':self.campaign,'datasetLabel':self.dataset_label,'datasetKind':'observed','datasetVersion':self.dataset_version,
                 'metricLabel':self.metric_label,'creatorMetricLabels':self.creator_metric_labels,'creators':rows,'defaultCurrentRoster':roster,
-                'defaultBudget':budget,'defaultRosterBasis':self.default_roster_basis,'provenance':self.public_provenance(),
+                'defaultBudget':budget,'defaultRosterBasis':self.default_roster_basis,'rosterList':bool(self.planner.metadata.get('roster')),
+                'rosterMissing':list((self.planner.metadata.get('roster') or {}).get('missing') or []),
+                'rosterSkipped':list((self.planner.metadata.get('roster') or {}).get('skipped') or []),'provenance':self.public_provenance(),
                 'evidence':{'medianSampledCommenters':median_sample,'eligibleCreators':len(self.eligible),'thinCreators':len(self.thin),
                             'strength':'strong' if median_sample>=300 else 'moderate' if median_sample>=100 else 'thin'}}
 
@@ -181,6 +183,10 @@ class RealDataProvider:
     def default_scenario(self):
         """Starting budget and roster. Searched datasets get a budget that forces a choice and a naive biggest-first roster."""
         meta=self.planner.metadata
+        if meta.get('roster'):
+            # The user uploaded this list: the whole list is their roster, and the recommendation is the lower-overlap subset of it.
+            self.default_roster_basis='The creators in your list.'
+            return 10000,[c['id'] for c in self.planner.creators if c['id'] in self.eligible]
         if not meta.get('prompt'):
             self.default_roster_basis='Top creators by historical views that fit the budget.'
             baseline=self.planner.optimize({'budget':10000,'objective':'viewer_proxy','exclude':[c['id'] for c in self.planner.creators if c['id'] not in self.eligible]})['baselines']['top_views']

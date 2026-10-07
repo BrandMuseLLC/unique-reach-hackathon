@@ -1,0 +1,193 @@
+/* Unique Reach — generated from tokens.json */
+:root, [data-theme="dark"] {
+  --brandmuse-purple: #8b5cf6;
+  --brandmuse-purple-light: #a78bfa;
+  --brandmuse-purple-dark: #7c3aed;
+  --purple-500: #a855f7;
+  --purple-400: #c084fc;
+  --purple-200: #c4b5fd;
+  --purple-100: #ddd6fe;
+  --purple-ink: #3b3552;
+  --brandmuse-light-background: #050508;
+  --brandmuse-light-surface: rgba(255, 255, 255, 0.035);
+  --brandmuse-light-border: rgba(255, 255, 255, 0.08);
+  --brandmuse-light-text: #f4f4f8;
+  --brandmuse-light-muted-text: #a3a3b8;
+  --brandmuse-dark-background: #0a0a0f;
+  --brandmuse-dark-surface: #0f0f18;
+  --brandmuse-dark-raised-surface: #1a1a24;
+  --brandmuse-dark-border: #1f1f2e;
+  --brandmuse-dark-text: #ffffff;
+  --brandmuse-dark-muted-text: #d1d5db;
+  --bm-surface: rgba(255, 255, 255, 0.035);
+  --bm-raised: rgba(255, 255, 255, 0.06);
+  --bm-border: rgba(255, 255, 255, 0.08);
+  --bm-solid: #0f0f18;
+  --bm-chart-recommended: #8b5cf6;
+  --bm-chart-baseline: #199e70;
+  --bm-chart-current: #d95926;
+  --bm-chart-repeat: #4c3a7a;
+  --bm-grid: rgba(255, 255, 255, 0.07);
+  --green-500: #22c55e;
+  --green-300: #86efac;
+  --green-200: #bbf7d0;
+  --green-ink: #04130a;
+  --red-500: #ef4444;
+  --red-300: #fca5a5;
+  --red-200: #fecaca;
+  --yellow-500: #eab308;
+  --yellow-400: #facc15;
+  --yellow-300: #fcd34d;
+  --yellow-200: #fde68a;
+  --orange-500: #f97316;
+  --orange-400: #fb923c;
+  --orange-300: #fdba74;
+  --teal-500: #14b8a6;
+  --teal-300: #5eead4;
+  --teal-200: #99f6e4;
+  --blue-500: #3b82f6;
+  --blue-300: #93c5fd;
+  --gray-500: #6b7280;
+  --gray-400: #9ca3af;
+  --slate-500: #6e6e85;
+  --slate-400: #7b7b92;
+  --slate-300: #8a8aa3;
+  --ground-glow-1: rgba(139, 92, 246, 0.18);
+  --ground-glow-2: rgba(168, 85, 247, 0.1);
+  --purple-tint-08: rgba(139, 92, 246, 0.08);
+  --purple-tint-12: rgba(139, 92, 246, 0.12);
+  --purple-tint-14: rgba(139, 92, 246, 0.14);
+  --purple-tint-18: rgba(139, 92, 246, 0.18);
+  --purple-tint-22: rgba(139, 92, 246, 0.22);
+  --purple-tint-25: rgba(139, 92, 246, 0.25);
+  --purple-tint-30: rgba(139, 92, 246, 0.3);
+  --purple-tint-35: rgba(139, 92, 246, 0.35);
+  --purple-tint-40: rgba(139, 92, 246, 0.4);
+  --purple-tint-55: rgba(139, 92, 246, 0.55);
+  --purple-tint-60: rgba(139, 92, 246, 0.6);
+  --purple-tint-70: rgba(139, 92, 246, 0.7);
+  --green-tint-08: rgba(34, 197, 94, 0.08);
+  --green-tint-10: rgba(34, 197, 94, 0.1);
+  --green-tint-12: rgba(34, 197, 94, 0.12);
+  --green-tint-30: rgba(34, 197, 94, 0.3);
+  --green-tint-45: rgba(34, 197, 94, 0.45);
+  --red-tint-08: rgba(239, 68, 68, 0.08);
+  --red-tint-12: rgba(239, 68, 68, 0.12);
+  --red-tint-16: rgba(239, 68, 68, 0.16);
+  --red-tint-30: rgba(239, 68, 68, 0.3);
+  --yellow-tint-08: rgba(234, 179, 8, 0.08);
+  --yellow-tint-10: rgba(234, 179, 8, 0.1);
+  --yellow-tint-25: rgba(234, 179, 8, 0.25);
+  --yellow-tint-30: rgba(234, 179, 8, 0.3);
+  --orange-tint-08: rgba(249, 115, 22, 0.08);
+  --orange-tint-30: rgba(249, 115, 22, 0.3);
+  --blue-tint-08: rgba(59, 130, 246, 0.08);
+  --blue-tint-30: rgba(59, 130, 246, 0.3);
+  --teal-tint-12: rgba(20, 184, 166, 0.12);
+  --teal-tint-30: rgba(20, 184, 166, 0.3);
+  --white-02: rgba(255, 255, 255, 0.02);
+  --white-03: rgba(255, 255, 255, 0.03);
+  --white-04: rgba(255, 255, 255, 0.04);
+  --white-05: rgba(255, 255, 255, 0.05);
+  --white-08: rgba(255, 255, 255, 0.08);
+  --white-18: rgba(255, 255, 255, 0.18);
+  --black-22: rgba(0, 0, 0, 0.22);
+  --black-25: rgba(0, 0, 0, 0.25);
+  --black-30: rgba(0, 0, 0, 0.3);
+  --black-35: rgba(0, 0, 0, 0.35);
+  --black-40: rgba(0, 0, 0, 0.4);
+  --side-glass: rgba(8, 8, 14, 0.7);
+  --chat-glass: rgba(10, 10, 16, 0.85);
+  --hero-deep: rgba(20, 20, 32, 0.6);
+  --app-ground: #101728;
+  --app-card: #151c2d;
+  --app-card-border: #2f374b;
+  --app-field: #1a1f33;
+  --app-inset: #1c2334;
+  --app-chip: #14192e;
+  --app-nav-start: #8638df;
+  --app-nav-end: #752ac8;
+  --app-mark: #883ae1;
+  --app-fab-start: #9f62e6;
+  --app-fab-end: #7351e1;
+  --app-avatar: #1f2441;
+  --app-avatar-text: #d0d4df;
+  --app-accent: #b787f5;
+  --app-status-teal: #4d9ab1;
+  --app-text: #ededed;
+  --app-text-2: #d7d8da;
+  --app-muted: #acb0b9;
+  --app-muted-2: #979aa1;
+  --app-insight: #ac96d0;
+  --app-sparkle: #9671cc;
+  --shadow-app-nav: 0 6px 18px rgba(134, 56, 223, 0.35);
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 24px 48px rgba(0, 0, 0, 0.35);
+  --shadow-hero: 0 20px 50px rgba(0, 0, 0, 0.35);
+  --shadow-tip: 0 8px 20px rgba(0, 0, 0, 0.4);
+  --shadow-primary: 0 8px 22px rgba(139, 92, 246, 0.28);
+  --shadow-nav-active: 0 6px 18px rgba(139, 92, 246, 0.25);
+  --shadow-score-highlight: 0 18px 38px rgba(139, 92, 246, 0.14);
+  --shadow-orb: 0 0 18px rgba(139, 92, 246, 0.5);
+  --shadow-flash: 0 0 0 2px rgba(139, 92, 246, 0.7), 0 0 40px rgba(139, 92, 246, 0.25);
+  --shadow-focus: 0 0 0 3px rgba(139, 92, 246, 0.18);
+  --shadow-step-now: 0 0 0 4px rgba(139, 92, 246, 0.2);
+  --shadow-dot-live: 0 0 8px rgba(34, 197, 94, 0.6);
+}
+:root {
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-18: 18px;
+  --space-20: 20px;
+  --space-22: 22px;
+  --space-24: 24px;
+  --space-28: 28px;
+  --space-32: 32px;
+  --radius-app-field: 16px;
+  --radius-4: 4px;
+  --radius-6: 6px;
+  --radius-8: 8px;
+  --radius-9: 9px;
+  --radius-10: 10px;
+  --radius-12: 12px;
+  --radius-14: 14px;
+  --radius-16: 16px;
+  --radius-18: 18px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+  --blur-card: 14px;
+  --blur-rail: 16px;
+  --sidebar-width: 232px;
+  --chat-width: 360px;
+  --content-max-width: 1480px;
+  --control-height: 38px;
+  --control-height-lg: 44px;
+  --control-height-xl: 48px;
+  --tab-height: 32px;
+  --avatar-size: 32px;
+  --bar-height: 16px;
+  --font-sans: "Plus Jakarta Sans", Inter, system-ui, sans-serif;
+}
+.hero-question { font-family: var(--font-sans); font-size: 34px; font-weight: 300; line-height: 1.2; letter-spacing: -0.01em; }
+.eyebrow-wide { font-family: var(--font-sans); font-size: 12px; font-weight: 500; line-height: 1.2; letter-spacing: 0.2em; }
+.hero-number { font-family: var(--font-sans); font-size: 56px; font-weight: 800; line-height: 1; letter-spacing: -0.03em; }
+.page-title { font-family: var(--font-sans); font-size: 34px; font-weight: 700; line-height: 1.2; letter-spacing: -0.03em; }
+.kpi-value { font-family: var(--font-sans); font-size: 30px; font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; }
+.hero-secondary { font-family: var(--font-sans); font-size: 28px; font-weight: 700; line-height: 1; letter-spacing: -0.03em; }
+.duo-value { font-family: var(--font-sans); font-size: 22px; font-weight: 700; line-height: 1.2; letter-spacing: -0.02em; }
+.money-value { font-family: var(--font-sans); font-size: 20px; font-weight: 700; line-height: 1.2; }
+.section-title { font-family: var(--font-sans); font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.01em; }
+.panel-title { font-family: var(--font-sans); font-size: 18px; font-weight: 700; line-height: 1.25; letter-spacing: -0.01em; }
+.card-title { font-family: var(--font-sans); font-size: 16px; font-weight: 600; line-height: 1.35; }
+.subhead { font-family: var(--font-sans); font-size: 15px; font-weight: 600; line-height: 1.3; }
+.chart-title { font-family: var(--font-sans); font-size: 14px; font-weight: 600; line-height: 1.3; }
+.lead { font-family: var(--font-sans); font-size: 15px; font-weight: 400; line-height: 1.5; }
+.body { font-family: var(--font-sans); font-size: 14px; font-weight: 400; line-height: 1.5; }
+.helper { font-family: var(--font-sans); font-size: 13px; font-weight: 400; line-height: 1.5; }
+.meta { font-family: var(--font-sans); font-size: 12px; font-weight: 400; line-height: 1.45; }
+.label { font-family: var(--font-sans); font-size: 11px; font-weight: 600; line-height: 1.2; letter-spacing: 0.08em; }
+.micro { font-family: var(--font-sans); font-size: 10px; font-weight: 600; line-height: 1.2; }

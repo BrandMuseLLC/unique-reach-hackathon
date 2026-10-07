@@ -13,8 +13,8 @@ else:
 
 SECTIONS = {
     "discover": "Top of the page: describe a campaign to search YouTube for a new set of creators.",
-    "overview": "Plan at a glance: the headline audience overlap % for your roster vs the recommended one, plus commenters reached, spend, creator count, and charts for overlap by roster and what each pick adds.",
-    "creators": "Creators list: every creator with Recommended / left-out badges, filter tabs, editable quotes, require/exclude rules and per-creator details.",
+    "overview": "Overview: the headline audience overlap % for the recommendation vs your roster, unique reach, how many creators are recommended, the recommended creator cards, and charts for overlap by roster and what each pick adds.",
+    "creators": "Creators list: Recommended, Your creators and Left out tabs, platform filters, require/exclude rules, a live overlap strip and per-creator details.",
     "map": "Audience map: clusters of creators whose commenters overlap, and shared-commenter counts for any pair.",
     "platforms": "Beyond YouTube: Instagram and TikTok creators with a similar niche and audience to the plan's creators, from Upriver (modeled similarity, costs credits, not measured overlap).",
     "whynot": "Why not: a chart of how much of each left-out creator's audience the plan already reaches, and a picker for the full reason and which creators overlap it.",
@@ -26,7 +26,11 @@ with less overlap. Decide the intent of the user's latest message and respond in
 Intents:
 - change: the user wants the plan to change. Return the COMPLETE new settings (budget, must_include, exclude, max_per_group,
   relevance, brand_description, creator_count), starting from current_settings and changing only what the request implies.
-- question: answer from plan_evidence only. Every number you state must appear in plan_evidence. If it cannot be answered, say what is missing.
+- question: answer from plan_evidence only. Every number you state must appear in plan_evidence, copied as written (you may add a
+  % sign to a share given as a percentage). Overlap percentages are in plan_evidence under "overlap". Never compute new figures,
+  totals or differences. If it cannot be answered, say what is missing.
+Money is not part of this tool: the budget is effectively unlimited and the page shows no quotes or spend. Never mention
+money, cost, quotes, spend or budget in a reply; the only levers are which creators are in, how many to recommend, platforms and topics.
 - navigate: the user asks where to find something or how to use the page. Pick the best section and say what they will see there.
 - discover: the user describes a different product, niche or campaign that needs new creators (not a tweak to this roster).
   Put a concise campaign description in discover_prompt.
@@ -36,8 +40,8 @@ Turning vague goals into concrete changes (always prefer a change that can move 
 - "more X", "focus on X", "lean into X": set relevance for topics matching X to 1.0 and every other topic to 0.3 or lower.
   If that alone is unlikely to change a small roster, also cap unrelated topics with max_per_group (for example 0 or 1).
 - "less overlap", "more unique audiences", "diversify": set max_per_group to 1 for topics that currently hold 2+ selected creators.
-- "cheaper", "spend less", "smaller": lower the budget by about 30% unless the user names an amount.
-- "bigger names", "more reach": raise the budget by about 30%, or require the largest relevant creator by views.
+- "smaller", "tighter", "fewer": lower creator_count by 2 (never below 2). Keep the budget exactly as it is in current_settings.
+- "bigger names", "more reach": require the largest relevant creator by views, or raise creator_count. Keep the budget as it is.
 - "N creators", "only N creators", "give me N": set creator_count to N (0 means no target). Keep the budget unless the user
   names one; the server raises it if N creators cannot fit and explains when the search has fewer than N usable creators.
   Otherwise keep creator_count at its current value.
@@ -76,8 +80,8 @@ def decide(provider, inputs, plan, message, history=(), transport=None):
     settings = {"budget": inputs["budget"], "must_include": inputs.get("include", []), "exclude": inputs.get("exclude", []),
                 "max_per_group": context.get("maxPerGroup", {}), "relevance": context.get("relevance", {}),
                 "brand_description": context.get("brandDescription", ""), "creator_count": context.get("creatorCount", 0)}
-    creators = [{"id": c["id"], "name": c["name"], "topic": c["community"], "median_views": round(c["views"]),
-                 "quote": inputs.get("costs", {}).get(c["id"], int(c["cost"])), "in_plan": c["id"] in plan["recommended"]["ids"],
+    creators = [{"id": c["id"], "name": c["name"], "topic": c["community"], "audience_size": round(c["views"]),
+                 "platform": c.get("platform", "youtube"), "in_plan": c["id"] in plan["recommended"]["ids"],
                  **({"sponsor_mentions": [b["brand"] for b in c["sponsor_mentions"]["brands"][:5]]} if c.get("sponsor_mentions") else {})}
                 for c in planner.creators if c["id"] in provider.eligible]
     payload = {"message": message, "recent_conversation": [{"role": h.get("role"), "text": str(h.get("text", ""))[:400]} for h in list(history)[-6:]],
@@ -93,8 +97,9 @@ def decide(provider, inputs, plan, message, history=(), transport=None):
         section = decision.get("section") if decision.get("section") in SECTIONS else None
         out = {"intent": intent, "reply": reply, "section": section}
         if intent == "question" and not ai_explain.grounded(reply, payload["plan_evidence"], message):
-            out["reply"] = "I couldn't answer that from this plan's numbers without guessing. The Why not and Plan at a glance sections show the underlying figures."
-            out["section"] = section or "whynot"
+            # The model quoted a figure that is not in the plan; answer with the plan's own numbers instead of guessing.
+            out["reply"] = "Here is what the plan itself says. " + ai_explain.summary(plan)
+            out["section"] = section or "overview"
         if intent == "discover":
             prompt = decision.get("discover_prompt", "").strip()
             if not 3 <= len(prompt) <= 300:

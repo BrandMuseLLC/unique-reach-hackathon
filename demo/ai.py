@@ -124,10 +124,12 @@ Reply in one short sentence describing the interpreted change, or the needed cla
     content = json.dumps({"message": message, "current_constraints": ctx, "dataset_kind": planner.metadata["kind"], "creators": public})
     if provider == "anthropic":
         url = "https://api.anthropic.com/v1/messages"
-        payload = {"model": model, "max_tokens": 1800, "system": system,
+        # Current Claude models reject forced tool_choice; the prompt asks for the tool and the response is read from its tool_use block.
+        payload = {"model": model, "max_tokens": 8000, "output_config": {"effort": "low"},
+                   "system": system + "\n\nRespond only by calling the set_reach_brief tool with the complete decision. Do not answer in prose.",
                    "messages": [{"role": "user", "content": content}],
                    "tools": [{"name": "set_reach_brief", "description": "Return a complete validated campaign-brief proposal or a clarification.", "input_schema": schema}],
-                   "tool_choice": {"type": "tool", "name": "set_reach_brief", "disable_parallel_tool_use": True}}
+                   "tool_choice": {"type": "auto", "disable_parallel_tool_use": True}}
         headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
     else:
         url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % model
