@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { EyebrowRow } from './parts';
 import { whole, type Graph } from './types';
 
-export function ExploreOverlap({ graph: given, aiEnabled = false, onExplain, onGraph }: { graph?: Graph | null; aiEnabled?: boolean; onExplain?: () => void; onGraph?: (graph: Graph) => void }) {
+export function ExploreOverlap({ graph: given, aiEnabled = false, onExplain, onGraph, planIds = [] }: { graph?: Graph | null; aiEnabled?: boolean; onExplain?: () => void; onGraph?: (graph: Graph) => void; planIds?: string[] }) {
+  const inPlan = new Set(planIds);
   // The Studio fetches the graph once and passes it down; the legacy layout still lets this component fetch for itself.
   const [own, setOwn] = useState<Graph | null>(null);
   const [error, setError] = useState('');
@@ -75,7 +76,7 @@ export function ExploreOverlap({ graph: given, aiEnabled = false, onExplain, onG
             <label className="app-aud-pick">
               <span>Pick a creator</span>
               <select className="app-select" value={focus} onChange={(e) => setFocus(e.target.value)} aria-label="Pick a creator">
-                {[...graph.nodes].sort((a, b) => a.name.localeCompare(b.name)).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+                {[...graph.nodes].sort((a, b) => Number(inPlan.has(b.id)) - Number(inPlan.has(a.id)) || a.name.localeCompare(b.name)).map((n) => <option key={n.id} value={n.id}>{n.name}{inPlan.has(n.id) ? ' · recommended' : ''}</option>)}
               </select>
             </label>
             <p className="app-aud-lead">
@@ -89,7 +90,7 @@ export function ExploreOverlap({ graph: given, aiEnabled = false, onExplain, onG
               <ul className="app-aud-bars" key={focus}>
                 {neighbours.map((n) => (
                   <li key={n.other.id}>
-                    <button type="button" className="app-aud-name" onClick={() => setFocus(n.other.id)} title={`Show ${n.other.name}`}>{n.other.name}</button>
+                    <button type="button" className={`app-aud-name ${inPlan.has(n.other.id) ? 'in-plan' : ''}`} onClick={() => setFocus(n.other.id)} title={`Show ${n.other.name}${inPlan.has(n.other.id) ? ' (recommended)' : ''}`}>{n.other.name}</button>
                     <div className="app-bar app-bar-10"><i style={{ width: `${Math.max((n.share / maxShare) * 100, 3)}%` }} /></div>
                     <span className="app-aud-value"><strong>{(n.share * 100).toFixed(n.share < 0.1 ? 1 : 0)}%</strong><small>{n.source && n.source !== 'measured' ? n.source : `${whole(n.shared)} people`}</small></span>
                   </li>
@@ -117,7 +118,7 @@ export function ExploreOverlap({ graph: given, aiEnabled = false, onExplain, onG
                     {g.summary && <p>{g.summary}</p>}
                     <div className="app-aud-members">
                       {g.members.map((id) => (
-                        <button type="button" key={id} className={`app-chip small ${id === focus ? 'active' : ''}`} onClick={() => setFocus(id)}>{nodes.get(id)?.name ?? id}</button>
+                        <button type="button" key={id} className={`app-chip small ${id === focus ? 'active' : ''} ${inPlan.has(id) ? 'in-plan' : ''}`} onClick={() => setFocus(id)} title={inPlan.has(id) ? 'Recommended' : undefined}>{nodes.get(id)?.name ?? id}</button>
                       ))}
                     </div>
                   </div>

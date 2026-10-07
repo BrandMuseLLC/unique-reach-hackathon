@@ -34,10 +34,6 @@ export function MethodsScreen({ method }: { method: Method | null }) {
             <h3>Estimated unique followers</h3>
             <p>Reach is followers on every platform, so creators compare fairly. For a roster we add everyone&rsquo;s followers, then subtract the estimated shared followers for each pair (overlap &times; the smaller audience). The plan picks the lowest-overlap roster that still reaches at least as many estimated unique followers as yours.</p>
           </article>
-          <article className="app-card app-method">
-            <h3>Quotes and limits</h3>
-            <p>When planning across platforms, every quote is modeled per 1,000 followers so platforms compare fairly: about ${method?.quotePer1k?.youtube ?? 20} on YouTube, ${method?.quotePer1k?.instagram ?? 10} on Instagram and ${method?.quotePer1k?.tiktok ?? 7.5} on TikTok. These are rough market rates, not quotes. Edit any quote in the creators list. Upriver&rsquo;s &ldquo;similar creators&rdquo; score only suggests lookalikes and never feeds these numbers.</p>
-          </article>
         </div>
       </section>
     </div>

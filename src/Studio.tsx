@@ -1,23 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Bell, Check, ChevronRight, CircleHelp, Home, Loader2, Map as MapIcon, Send, SlidersHorizontal, Sparkles, Upload, User, Users } from 'lucide-react';
-import { CreatorsScreen, type RosterStatus } from './CreatorsScreen';
+import { CreatorsScreen, type CreatorsFilter, type RosterStatus } from './CreatorsScreen';
 import { MethodsScreen } from './MethodsScreen';
 import { MusePanel } from './MusePanel';
 import { Avatar, Chip, EyebrowRow, Insight, Mark, PlatformGlyph, StatCard } from './parts';
 import {
-  PLATFORMS, PLATFORM_COMMUNITY, PLATFORM_LABEL, compact, money, pct, platformOf, topicOf,
-  type Attachment, type Campaign, type ChatMessage, type Creator, type Dataset, type Evidence, type Graph, type Inputs, type Job, type Method, type Plan, type Platform, type RosterDiag, type RosterItem, type SavedCampaign,
+  PLATFORMS, PLATFORM_COMMUNITY, PLATFORM_LABEL, compact, pct, platformOf, topicOf,
+  type Attachment, type Campaign, type ChatMessage, type Creator, type Dataset, type Delta, type Evidence, type Graph, type Inputs, type Job, type Method, type Plan, type Platform, type RosterDiag, type RosterItem, type SavedCampaign,
 } from './types';
 import whiteWordmark from '../brandmuse/assets/brand-muse-wordmark-white.jpg';
 import './studio.css';
 
 type Screen = 'overview' | 'creators' | 'methods';
 type Route = { screen: Screen; anchor: string };
-type Delta = { subject: 'plan' | 'roster'; added: string[]; removed: string[]; previous: Inputs };
 type UpriverStatus = { configured: boolean; creditsReservedThisSession: number; creditCap: number; creditsRemaining: number };
 
 const EMPTY = { brandDescription: '', relevance: {}, maxPerGroup: {}, creatorCount: 0 };
 const DEFAULT_CREATORS = 10;
+// The planner is an audience-overlap tool here, not a media buyer: the budget is kept unbounded and never shown.
+const UNBOUNDED_BUDGET = 5_000_000;
 const NAV: { label: string; icon: typeof Home; screen: Screen; anchor?: string }[] = [
   { label: 'Overview', icon: Home, screen: 'overview' },
   { label: 'Creators', icon: Users, screen: 'creators' },
@@ -77,7 +78,8 @@ export function Studio() {
   const [saving, setSaving] = useState(false);
   const [datasetVersion, setDatasetVersion] = useState('');
   const [creators, setCreators] = useState<Creator[]>([]);
-  const [inputs, setInputs] = useState<Inputs>({ budget: 10000, currentRoster: [], include: [], exclude: [], costs: {}, planningContext: EMPTY });
+  const [inputs, setInputs] = useState<Inputs>({ budget: UNBOUNDED_BUDGET, currentRoster: [], include: [], exclude: [], costs: {}, planningContext: EMPTY });
+  const [rosterList, setRosterList] = useState(false);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [plannedKey, setPlannedKey] = useState('');
   const [delta, setDelta] = useState<Delta | null>(null);
@@ -177,7 +179,7 @@ export function Studio() {
   async function loadDataset() {
     setError('');
     try {
-      const payload = await api<{ campaign: Campaign; creators: Creator[]; datasetVersion: string; datasetKind?: string; method?: Method; defaultBudget?: number; defaultCurrentRoster?: string[]; evidence?: Evidence; defaultRosterBasis?: string }>('/api/creators');
+      const payload = await api<{ campaign: Campaign; creators: Creator[]; datasetVersion: string; datasetKind?: string; method?: Method; defaultCurrentRoster?: string[]; evidence?: Evidence; defaultRosterBasis?: string; rosterList?: boolean }>('/api/creators');
       pageDataset = payload.datasetVersion;
       setDatasetVersion(payload.datasetVersion);
       setSaveName(`${payload.campaign.name} plan`.slice(0, 80));
@@ -186,19 +188,16 @@ export function Studio() {
       setEvidence(payload.evidence ?? null);
       setDatasetKind(payload.datasetKind ?? '');
       setMethod(payload.method ?? null);
-      setRosterBasis(payload.defaultRosterBasis ?? '');
+      setRosterBasis((payload.defaultRosterBasis ?? '').replace(/ that fit the budget/g, ''));
+      setRosterList(Boolean(payload.rosterList));
       setDelta(null);
       planRef.current = null;
       plannedInputsRef.current = null;
       skipAuto.current = true;
       setCreators(payload.creators);
-      // Default plan size is ten creators (or the whole pool when smaller); the budget stretches to fit ten typical quotes.
-      const quotes = payload.creators.filter((c) => c.eligibilityStatus !== 'ineligible').map((c) => c.baseCost).sort((a, b) => a - b);
-      const count = Math.min(DEFAULT_CREATORS, quotes.length);
-      const middle = Math.max(Math.floor((quotes.length - count) / 2), 0);
-      const typical = quotes.slice(middle, middle + count).reduce((s, q) => s + q, 0);
-      const base = payload.defaultBudget ?? (payload.creators.every((c) => c.source === 'synthetic') ? 139000 : 10000);
-      const next: Inputs = { budget: Math.max(base, Math.ceil(typical / 250) * 250), currentRoster: payload.defaultCurrentRoster ?? [], include: [], exclude: [],
+      // Default recommendation size is ten creators, or the whole pool when it is smaller.
+      const count = Math.min(DEFAULT_CREATORS, payload.creators.filter((c) => c.eligibilityStatus !== 'ineligible').length);
+      const next: Inputs = { budget: UNBOUNDED_BUDGET, currentRoster: payload.defaultCurrentRoster ?? [], include: [], exclude: [],
         costs: Object.fromEntries(payload.creators.map((c) => [c.id, c.baseCost])), planningContext: { ...EMPTY, creatorCount: count } };
       setInputs(next);
       await runPlan(next);
@@ -223,7 +222,7 @@ export function Studio() {
   async function restoreCampaign(id: string) {
     const row = saved.find((c) => c.id === id && c.datasetVersion === datasetVersion);
     if (!row) return;
-    const next: Inputs = { budget: row.budget, currentRoster: row.currentRoster, include: row.include, exclude: row.exclude, costs: row.costs, planningContext: row.planningContext ?? EMPTY };
+    const next: Inputs = { budget: UNBOUNDED_BUDGET, currentRoster: row.currentRoster, include: row.include, exclude: row.exclude, costs: row.costs, planningContext: row.planningContext ?? EMPTY };
     ++requestId.current;
     skipAuto.current = true;
     inputsRef.current = next;
@@ -241,7 +240,8 @@ export function Studio() {
     const subject = rosterOnly ? 'roster' : 'plan';
     const pick = (p: Plan) => (subject === 'roster' ? p.rosterDiagnostics!.rosters.current : p.rosterDiagnostics!.rosters.recommended);
     const b = pick(before), a = pick(after);
-    setDelta({ subject, added: a.ids.filter((id) => !b.ids.includes(id)), removed: b.ids.filter((id) => !a.ids.includes(id)), previous: beforeInputs });
+    setDelta({ subject, overlapFrom: b.sharedRate, overlapTo: a.sharedRate, reachFrom: b.coverage, reachTo: a.coverage,
+      added: a.ids.filter((id) => !b.ids.includes(id)), removed: b.ids.filter((id) => !a.ids.includes(id)), previous: beforeInputs });
   }
 
   function applyPlan(next: Inputs, result: Plan) {
@@ -370,7 +370,7 @@ export function Studio() {
         if (current.job.status === 'done' && current.job.dataset_id) {
           await activate(current.job.dataset_id);
           setMessages((m) => [...m, roster
-            ? { role: 'assistant', text: `${current.job.message}. The recommended roster from your list is on the Overview and every creator is in the Creators tab. ${aiEnabled ? 'Tell me how to change it: a budget, a creator count, someone to require or drop.' : 'Use the sliders in the prompt field to set the budget and creator count.'}`, section: 'overview' }
+            ? { role: 'assistant', text: `${current.job.message}. The recommendation from your list is on the Overview; the Creators tab shows Recommended next to Your creators. ${aiEnabled ? 'Tell me how to change it: how many creators, someone to require or drop, less overlap.' : 'Use the sliders in the prompt field to set how many creators to recommend.'}`, section: 'overview' }
             : { role: 'assistant', text: `${current.job.message}. The plan is now for “${text.trim()}”.`, section: 'overview' }]);
         }
       };
@@ -448,20 +448,20 @@ export function Studio() {
   const platformsOn = platformsPresent.filter(platformOn);
   const platformsOff = platformsPresent.filter((p) => !platformOn(p));
   const firstLeftOut = plan?.whyNot?.[0]?.creatorName;
-  const suggestions = ['Less overlap', 'Make it cheaper', firstLeftOut ? `Why was ${firstLeftOut} left out?` : 'Where do I see why a creator was left out?'];
+  const suggestions = ['Less overlap', 'Recommend 6 creators', firstLeftOut ? `Why was ${firstLeftOut} left out?` : 'Where do I see why a creator was left out?'];
 
-  // Share of a plan creator's audience that another plan creator also reaches, from the overlap graph.
-  function overlapFor(id: string): { share: number; source: string } | null {
+  // Share of a plan creator's audience that another plan creator also reaches, from the overlap graph, and who that is.
+  function overlapFor(id: string): { share: number; source: string; with: string } | null {
     if (!graph || !planIds) return null;
     const me = graph.nodes.find((n) => n.id === id);
     if (!me || !me.sampledCommenters) return null;
-    let best: { share: number; source: string } | null = null;
+    let best: { share: number; source: string; with: string } | null = null;
     for (const p of graph.pairs) {
       if ((p.a !== id && p.b !== id) || p.sharedCommenters <= 0) continue;
       const other = p.a === id ? p.b : p.a;
       if (!planIds.has(other)) continue;
       const share = p.sharedCommenters / me.sampledCommenters;
-      if (!best || share > best.share) best = { share, source: p.source ?? 'measured' };
+      if (!best || share > best.share) best = { share, source: p.source ?? 'measured', with: names[other] ?? other };
     }
     return best;
   }
@@ -475,8 +475,9 @@ export function Studio() {
     ? `${evidence.strength === 'thin' ? 'Thin evidence' : 'Limited evidence'}: a typical creator here has about ${evidence.medianSampledCommenters.toLocaleString('en-US')} sampled commenters, so small overlap differences are rough. Channels with comments turned off can’t be measured.`
     : plan?.countNote && !stale ? plan.countNote : '';
   const insight = plan && rec
-    ? `${rec.ids.length} creators, ${pct(rec.sharedRate)} ${crossPlatform ? 'estimated ' : ''}overlap, ${money(rec.spend)} of ${money(plan.budget)}.${plan.choice?.headline ? ` ${plan.choice.headline}` : ''}${plan.steps[0]?.reason ? ` ${plan.steps[0].reason}` : plan.steps[0] ? ` Next move: check whether ${plan.steps[0].creatorName} should be required, re-priced or swapped.` : ''}`
+    ? `${rec.ids.length} of ${eligible.length} creators, ${pct(rec.sharedRate)} ${crossPlatform ? 'estimated ' : ''}overlap, ${compact(plan.recommended.proxyReach)} unique ${crossPlatform ? 'followers' : 'commenters'}.${plan.choice?.headline ? ` ${plan.choice.headline}` : ''}${plan.steps[0]?.reason ? ` ${plan.steps[0].reason}` : plan.steps[0] ? ` Next move: check whether ${plan.steps[0].creatorName} should be required or swapped.` : ''}`
     : '';
+  const creatorsFilter: CreatorsFilter | undefined = route.anchor === 'yours' ? 'yours' : route.anchor === 'left' ? 'left' : route.anchor === 'recommended' ? 'recommended' : undefined;
 
   return (
     <div className="app">
@@ -509,19 +510,15 @@ export function Studio() {
               <input ref={promptRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} aria-label="Campaign brief" maxLength={300} disabled={job?.status === 'running'}
                 placeholder="Describe what you're launching: the product, who it's for, which platforms" />
               <kbd aria-hidden="true">&#8984;K</kbd>
-              <button type="button" className={`app-prompt-btn ${settingsOpen ? 'on' : ''}`} aria-label="Platforms and budget" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((v) => !v)}><SlidersHorizontal size={18} /></button>
+              <button type="button" className={`app-prompt-btn ${settingsOpen ? 'on' : ''}`} aria-label="Platforms and plan size" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((v) => !v)}><SlidersHorizontal size={18} /></button>
               <button type="submit" className="app-prompt-btn solid" aria-label="Find creators" disabled={!discoveryEnabled || !prompt.trim() || job?.status === 'running'}
                 title={discoveryEnabled ? 'Find creators' : 'Creator search needs the YouTube and Gemini keys on the server'}>
                 {job?.status === 'running' ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
               </button>
               {settingsOpen && (
-                <div className="app-popover" ref={popoverRef} role="dialog" aria-label="Platforms and budget">
+                <div className="app-popover" ref={popoverRef} role="dialog" aria-label="Platforms and plan size">
                   <div className="app-popover-row">
-                    <label className="app-field-label grow"><span>Budget</span>
-                      <span className="app-money"><b>$</b><input inputMode="numeric" value={inputs.budget.toLocaleString('en-US')} aria-label="Budget"
-                        onChange={(e) => update({ budget: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 })} /></span>
-                    </label>
-                    <label className="app-field-label"><span>Creators</span>
+                    <label className="app-field-label grow"><span>Creators to recommend</span>
                       <span className="app-count">
                         <button type="button" aria-label="Fewer creators" onClick={() => update({ planningContext: { ...inputs.planningContext, creatorCount: Math.max((inputs.planningContext.creatorCount ?? 0) - 1, 0) } })}>&minus;</button>
                         <b>{inputs.planningContext.creatorCount ? inputs.planningContext.creatorCount : 'Any'}</b>
@@ -593,21 +590,25 @@ export function Studio() {
             {plan && rec && cur ? (
               <div className="app-grid-3">
                 <StatCard accent value={pct(rec.sharedRate)} label={crossPlatform ? 'Estimated overlap' : 'Audience overlap'} caption="Recommended plan · lower is better" />
-                <StatCard value={compact(plan.recommended.proxyReach)} label={crossPlatform ? 'Unique followers' : 'Commenters reached'} caption={cur.ids.length ? `vs ${compact(plan.current.proxyReach)} in your roster` : 'Tick creators to compare your roster'} />
-                <StatCard value={money(rec.spend)} label="Spend" caption={`of ${money(plan.budget)} budget`} />
+                <StatCard value={compact(plan.recommended.proxyReach)} label={crossPlatform ? 'Unique followers' : 'Commenters reached'} caption={cur.ids.length ? `vs ${compact(plan.current.proxyReach)} across ${rosterList ? 'your whole list' : 'your roster'}` : 'Tick creators to compare your roster'} />
+                <StatCard value={`${rec.ids.length} of ${eligible.length}`} label="Recommended creators" caption={cur.ids.length ? `${rosterList ? 'your list' : 'your roster'} overlaps ${pct(cur.sharedRate)}` : 'from the pool'} />
               </div>
             ) : <div className="app-empty">{error ? 'The plan could not be computed.' : 'Planning…'}</div>}
             {caveat && <p className="app-caveat">{caveat}</p>}
             {delta && (delta.added.length > 0 || delta.removed.length > 0) && (
-              <p className="app-caveat app-undo-line">
-                <span>{delta.subject === 'roster' ? 'Your roster changed' : 'The plan changed'}: {[delta.added.length ? `added ${delta.added.map((id) => names[id] ?? id).join(', ')}` : '', delta.removed.length ? `removed ${delta.removed.map((id) => names[id] ?? id).join(', ')}` : ''].filter(Boolean).join(' · ')}.</span>
+              <div className="app-caveat app-undo-line" style={{ flexWrap: 'wrap' }}>
+                <span>{delta.subject === 'roster' ? (rosterList ? 'Your list changed' : 'Your roster changed') : 'The recommendation changed'}: {[delta.added.length ? `added ${delta.added.map((id) => names[id] ?? id).join(', ')}` : '', delta.removed.length ? `removed ${delta.removed.map((id) => names[id] ?? id).join(', ')}` : ''].filter(Boolean).join(' · ')}.</span>
+                <span className="app-delta-stats">
+                  <span>Overlap <s>{pct(delta.overlapFrom)}</s> <b>{pct(delta.overlapTo)}</b></span>
+                  <span>Reach <s>{compact(delta.reachFrom)}</s> <b>{compact(delta.reachTo)}</b></span>
+                </span>
                 <button type="button" className="app-link" onClick={() => { const prev = delta.previous; setDelta(null); setInputs(prev); }}>Undo</button>
-              </p>
+              </div>
             )}
           </section>
 
           <section className="app-section" aria-label="Recommended roster">
-            <EyebrowRow label="Recommended roster" link="View all" onLink={() => navigate('creators')} />
+            <EyebrowRow label={rosterList ? 'Recommended from your list' : 'Recommended roster'} link={rosterList ? `Your ${eligible.length} creators` : 'View all'} onLink={() => navigate('creators', rosterList ? 'yours' : 'recommended')} />
             {insight && <Insight>{insight}</Insight>}
             {plan && (
               <div className="app-grid-2">
@@ -624,20 +625,20 @@ export function Studio() {
                         <div className="app-creator-id">
                           <strong>{c.name}</strong>
                           <span>{PLATFORM_LABEL[platform]} &middot; {topicOf(c)}</span>
-                          <small>{status === 'required' ? 'Required' : 'In the plan'}</small>
+                          <small>{status === 'required' ? 'Required' : 'Recommended'}</small>
                         </div>
                       </div>
                       <div className="app-creator-stats">
                         <div><strong>{compact(c.followers ?? c.estimatedViews)}</strong><span>{crossPlatform || c.followers ? 'Followers' : 'Views'}</span></div>
-                        <div><strong>{money(inputs.costs[id] ?? c.baseCost)}</strong><span>Quote</span></div>
                         <div><strong>{ov ? pct(ov.share) : '—'}</strong><span>Overlap{ov && ov.source !== 'measured' ? ` · ${ov.source}` : ''}</span></div>
+                        <div><strong>{ov ? ov.with : '—'}</strong><span>Shares most with</span></div>
                       </div>
                     </article>
                   );
                 })}
                 {eligible.length > plan.recommended.ids.length && (
-                  <button type="button" className="app-card app-more-card" onClick={() => navigate('creators', 'whynot')}>
-                    {eligible.length - plan.recommended.ids.length} more in the pool. See why they were left out <ChevronRight size={14} />
+                  <button type="button" className="app-card app-more-card" onClick={() => navigate('creators', 'left')}>
+                    {eligible.length - plan.recommended.ids.length} {rosterList ? 'of your creators were left out' : 'more in the pool'}. See why <ChevronRight size={14} />
                   </button>
                 )}
               </div>
@@ -657,8 +658,8 @@ export function Studio() {
       )}
 
       {route.screen === 'creators' && (
-        <CreatorsScreen creators={creators} inputs={inputs} plan={plan} stale={stale} crossPlatform={crossPlatform} rosterBasis={rosterBasis} graph={graph} aiEnabled={aiEnabled}
-          statusOf={statusOf} platformOn={platformOn} onUpdate={update} onAsk={(q) => void send(q)} onExplain={() => navigate('methods')} onGraph={setGraph} />
+        <CreatorsScreen creators={creators} inputs={inputs} plan={plan} stale={stale} crossPlatform={crossPlatform} rosterList={rosterList} rosterBasis={rosterBasis} graph={graph} aiEnabled={aiEnabled}
+          delta={delta} initialFilter={creatorsFilter} statusOf={statusOf} platformOn={platformOn} onUpdate={update} onAsk={(q) => void send(q)} onExplain={() => navigate('methods')} onGraph={setGraph} />
       )}
 
       {route.screen === 'methods' && <MethodsScreen method={method} />}
@@ -707,10 +708,10 @@ function PickBars({ steps, cross }: { steps: Plan['steps']; cross: boolean }) {
     <div className="app-card app-chart">
       <h3>What each pick adds</h3>
       <p>New {cross ? 'followers' : 'commenters'} each creator adds, in the order the plan picked them.</p>
-      {steps.length === 0 ? <div className="app-empty">Nothing fits this budget yet.</div> : (
+      {steps.length === 0 ? <div className="app-empty">No picks yet.</div> : (
         <>
           <div className="app-columns" aria-hidden="true">
-            {steps.map((s, i) => <div key={`${s.creatorId}-${i}`} style={{ height: `${Math.max((s.marginalProxyReach / max) * 100, 4)}%` }} title={`#${i + 1} ${s.creatorName}: adds ${compact(s.marginalProxyReach)} for ${money(s.cost)}`} />)}
+            {steps.map((s, i) => <div key={`${s.creatorId}-${i}`} style={{ height: `${Math.max((s.marginalProxyReach / max) * 100, 4)}%` }} title={`#${i + 1} ${s.creatorName}: adds ${compact(s.marginalProxyReach)}`} />)}
           </div>
           <div className="app-columns-axis">{steps.map((s, i) => <span key={`${s.creatorId}-${i}`}>{i + 1}</span>)}</div>
           <p className="app-columns-note">pick order &middot; first bar &asymp; {compact(steps[0].marginalProxyReach)}</p>

@@ -68,6 +68,7 @@ export type Graph = { datasetVersion: string; nodes: GraphNode[]; pairs: GraphPa
 
 export type ChatMessage = { role: 'user' | 'assistant'; text: string; change?: { changed: boolean; text: string }; section?: string | null; discoverPrompt?: string | null; error?: boolean; attachment?: string };
 export type RosterItem = { handle: string; topic: string };
+export type Delta = { subject: 'plan' | 'roster'; overlapFrom: number; overlapTo: number; reachFrom: number; reachTo: number; added: string[]; removed: string[]; previous: Inputs };
 export type Attachment = { name: string; roster: RosterItem[] };
 
 export const PLATFORM_LABEL: Record<Platform, string> = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' };

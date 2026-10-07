@@ -403,11 +403,15 @@ class CrossPlatformProvider:
             if spend + c["cost"] <= budget:
                 roster.append(c["id"])
                 spend += c["cost"]
+        basis = self.default_roster_basis
+        if self.metadata.get("roster"):
+            # The user uploaded this list: the whole list is their roster, and the recommendation is the lower-overlap subset of it.
+            roster, basis = [c["id"] for c in pool], "The creators in your list."
         samples = sorted(c["commenter_count"] for c in pool if c["platform"] == "youtube")
         median = samples[len(samples) // 2] if samples else 0
         return {"campaign": self.campaign, "datasetLabel": self.dataset_label(), "datasetKind": "crossplatform", "datasetVersion": self.dataset_version,
                 "metricLabel": "Estimated unique followers", "creatorMetricLabels": {"views": "Followers", "price": "Quote (USD)", "rawViews": "Total followers"},
-                "creators": rows, "defaultCurrentRoster": roster, "defaultBudget": budget, "defaultRosterBasis": self.default_roster_basis,
+                "creators": rows, "defaultCurrentRoster": roster, "defaultBudget": budget, "defaultRosterBasis": basis, "rosterList": bool(self.metadata.get("roster")),
                 "provenance": {"kind": "crossplatform"}, "method": self.method(),
                 "evidence": {"medianSampledCommenters": median, "eligibleCreators": len(self.eligible), "thinCreators": len(self.thin),
                              "strength": "moderate"}}

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { EyebrowRow, Insight, Tag } from './parts';
-import { money, whole, type WhyNot } from './types';
+import { whole, type WhyNot } from './types';
 
 export type { WhyNot } from './types';
 
@@ -96,7 +96,7 @@ export function WhyNotPanel({ rows, stale, crossPlatform = true, onExplain }: {
           <p>
             <b>{row.creatorName}</b>: {covered}% of its modeled audience is already represented by the recommended roster
             {row.overlapsWith.length > 0 && <>, mostly through {row.overlapsWith.map((o) => `${o.creatorName} (${whole(o.sharedCommenters)} shared${o.source && o.source !== 'measured' ? `, ${o.source}` : ''})`).join(', ')}</>}.
-            {' '}Adding it at {money(row.cost)} would add {whole(row.marginalProxyReach)} to the score. {row.reason}
+            {' '}Adding it would reach about {whole(row.marginalProxyReach)} more people the recommendation does not already reach. {row.reason}
           </p>
         </div>
       </div>
