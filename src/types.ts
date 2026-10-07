@@ -72,8 +72,8 @@ export type Delta = { subject: 'plan' | 'roster'; overlapFrom: number; overlapTo
 export type Attachment = { name: string; roster: RosterItem[] };
 
 export const PLATFORM_LABEL: Record<Platform, string> = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' };
-// Planner groups ("communities") in a cross-platform dataset are the platform labels.
-export const PLATFORM_COMMUNITY: Record<Platform, string> = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' };
+// Planner groups ("communities") in a cross-platform dataset are the platform labels, so the cap keys are the same strings.
+export const PLATFORM_COMMUNITY = PLATFORM_LABEL;
 export const PLATFORMS: Platform[] = ['youtube', 'tiktok', 'instagram'];
 
 export const money = (v: number) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });

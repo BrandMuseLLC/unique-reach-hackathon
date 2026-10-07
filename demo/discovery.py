@@ -91,7 +91,7 @@ def _crossplatform(job_id, agg, plan, restricted, upriver_transport=None, explic
         if restricted_lower and aggregate.restricted_match("%s %s" % (row.get("name") or "", row.get("handle") or ""), restricted_lower):
             continue
         external.append(dict(row))
-    listed = {e["url"].rstrip("/").lower() for e in external}
+    listed = {e["url"].rstrip("/").lower() for e in external} | {e["id"] for e in external}
     categories = [plan.get("category") or plan["campaign_name"]]
     # A user's list can opt out of vendor-found lookalikes (ROSTER_SEARCH_LOOKALIKES=false): only listed creators are profiled.
     search = not (explicit is not None and os.environ.get("ROSTER_SEARCH_LOOKALIKES", "true").strip().lower() in ("false", "0", "no"))
@@ -110,9 +110,10 @@ def _crossplatform(job_id, agg, plan, restricted, upriver_transport=None, explic
             label = "%s %s" % (row.get("name") or "", row.get("handle") or "")
             if not row.get("followers") or (restricted_lower and aggregate.restricted_match(label, restricted_lower)):
                 continue
-            if str(row.get("url") or "").rstrip("/").lower() in listed:
+            row_id = "%s:%s" % (platform, str(row.get("handle") or row["url"]).lstrip("@").lower())
+            if str(row.get("url") or "").rstrip("/").lower() in listed or row_id in listed:
                 continue  # already in the user's list
-            external.append({"id": "%s:%s" % (platform, str(row.get("handle") or row["url"]).lstrip("@").lower()), "name": row.get("name"),
+            external.append({"id": row_id, "name": row.get("name"),
                              "platform": platform, "handle": row.get("handle"), "url": row["url"], "followers": row["followers"],
                              "topic": plan.get("category") or "Creator"})
     # Only YouTube creators the planner can use are worth profiling: skip channels set aside for too few comments.
@@ -211,8 +212,11 @@ def normalize_roster(rows):
     return split_roster(rows)[0]
 
 
-def split_roster(rows):
-    """User list rows split into YouTube (handle, topic) pairs and Instagram/TikTok externals; both deduplicated and bounded."""
+def split_roster(rows, unparsed=None):
+    """User list rows split into YouTube (handle, topic) pairs and Instagram/TikTok externals; both deduplicated and bounded.
+
+    Rows that are not a handle, channel id or profile URL are appended to `unparsed` (when given) so they can be reported.
+    """
     seen, roster, externals = set(), [], []
     for row in rows or []:
         if isinstance(row, (list, tuple)):
@@ -229,7 +233,11 @@ def split_roster(rows):
                                   "followers": None, "topic": topic})
             continue
         ident = normalize_handle(handle)
-        if not ident or ident.lower() in seen:
+        if not ident:
+            if unparsed is not None and str(handle or "").strip():
+                unparsed.append(str(handle).strip()[:60])
+            continue
+        if ident.lower() in seen:
             continue
         seen.add(ident.lower())
         roster.append((ident, topic))
@@ -273,11 +281,12 @@ def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=Fal
     prompt = (prompt or "").strip()
     if not 3 <= len(prompt) <= 300:
         raise PlanError("Describe the campaign in 3-300 characters.")
-    externals = []
+    externals, unparsed = [], []
     if roster:
-        roster, externals = split_roster(roster)
+        roster, externals = split_roster(roster, unparsed)
         if len(roster) < 2:
-            raise PlanError("A creator list needs at least two YouTube handles or channel URLs; Instagram and TikTok rows ride along with them.")
+            hint = (" Could not read: %s." % ", ".join(unparsed[:5])) if unparsed else ""
+            raise PlanError("A creator list needs at least two YouTube handles or channel URLs; Instagram and TikTok rows ride along with them." + hint)
         match = find_saved(roster, externals, saved) if saved else None
         if match:
             # The same list was mapped before: hand back the finished dataset instead of spending another collection run.
@@ -302,7 +311,7 @@ def start(prompt, keys, restricted=None, transport=None, expand_with_upriver=Fal
         _jobs[job_id] = {"id": job_id, "prompt": prompt, "status": "running", "step": "plan", "progress": 0.02,
                          "message": "Reading your creator list" if roster else "Understanding your brief", "dataset_id": None, "error": None, "units": 0}
     _running.set()
-    thread = threading.Thread(target=_run, args=(job_id, prompt, keys, restricted or set(), transport, expand_with_upriver, None, cross_platform, roster, externals), daemon=True)
+    thread = threading.Thread(target=_run, args=(job_id, prompt, keys, restricted or set(), transport, expand_with_upriver, None, cross_platform, roster, externals, unparsed), daemon=True)
     thread.start()
     return job_id
 
@@ -382,10 +391,10 @@ def _lookalikes(client, anchors, known, upriver_transport=None):
     return [i for i in items if i["id"] not in known], spent, notes
 
 
-def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False, upriver_transport=None, cross_platform=False, roster=None, externals=None):
+def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False, upriver_transport=None, cross_platform=False, roster=None, externals=None, unparsed=()):
     try:
         ANALYSES.mkdir(parents=True, exist_ok=True)
-        missing = []
+        missing, dropped = list(unparsed or ()), []
         if roster:
             # A creator list replaces the search: the model only names the campaign and labels the channels the user chose.
             plan = plan_roster(prompt, roster)
@@ -404,13 +413,17 @@ def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False,
 
         candidates = []
         if roster:
-            resolved, missing = _resolve_roster(client, roster)
+            resolved, not_found = _resolve_roster(client, roster)
+            missing += not_found
             for topic, subs, item in resolved:
                 label = "%s %s" % (item["snippet"].get("title", ""), item["snippet"].get("customUrl", ""))
                 if restricted and aggregate.restricted_match(label, {r.lower() for r in restricted}):
+                    dropped.append({"channel": item["snippet"].get("customUrl") or item["snippet"].get("title"), "reason": "restricted brand channel"})
                     continue
                 if int(item.get("statistics", {}).get("videoCount", 0)) >= 1:
                     candidates.append((topic, subs, item))
+                else:
+                    dropped.append({"channel": item["snippet"].get("customUrl") or item["snippet"].get("title"), "reason": "no public videos"})
             if missing:
                 _update(job_id, message="%d of %d creators found; not on YouTube: %s" % (len(candidates), len(roster), ", ".join(missing[:5])))
         else:
@@ -516,7 +529,7 @@ def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False,
             # Channels that resolved but yielded no public comments never reach the planner; the list keeps their names and why.
             agg["metadata"]["roster"] = {"requested": len(roster) + len(externals or []), "found": len(chosen), "missing": missing,
                                          "listed": roster_key(roster, externals),
-                                         "skipped": [{"channel": s.get("channel"), "reason": s.get("reason")} for s in report.get("skipped_channels", [])]}
+                                         "skipped": dropped + [{"channel": s.get("channel"), "reason": s.get("reason")} for s in report.get("skipped_channels", [])]}
         # A searched pool can afford to set thin channels aside; a user's own list keeps every measurable channel on the board.
         agg["metadata"]["min_commenters"] = int(os.environ.get("ROSTER_MIN_COMMENTERS", "10")) if roster else int(os.environ.get("DISCOVERY_MIN_COMMENTERS", "25"))
         agg["metadata"]["upriver_lookalikes"] = sorted(lookalike_ids & {c["id"] for c in agg["creators"]})

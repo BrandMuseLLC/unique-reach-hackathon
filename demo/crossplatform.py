@@ -405,8 +405,11 @@ class CrossPlatformProvider:
                 spend += c["cost"]
         basis = self.default_roster_basis
         if self.metadata.get("roster"):
-            # The user uploaded this list: the whole list is their roster, and the recommendation is the lower-overlap subset of it.
-            roster, basis = [c["id"] for c in pool], "The creators in your list."
+            # The user uploaded this list: the list itself is their roster (YouTube channels plus the Instagram/TikTok rows they named),
+            # never the lookalikes Upriver search added; the recommendation is the lower-overlap subset of it.
+            listed = {str(h).lower() for h in (self.metadata["roster"].get("listed") or [])}
+            mine = [c for c in pool if c["platform"] == "youtube" or not listed or str(c.get("url") or "").rstrip("/").lower() in listed]
+            roster, basis = [c["id"] for c in mine], "The creators in your list."
         samples = sorted(c["commenter_count"] for c in pool if c["platform"] == "youtube")
         median = samples[len(samples) // 2] if samples else 0
         return {"campaign": self.campaign, "datasetLabel": self.dataset_label(), "datasetKind": "crossplatform", "datasetVersion": self.dataset_version,

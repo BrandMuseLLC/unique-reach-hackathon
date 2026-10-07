@@ -189,3 +189,11 @@ def test_start_hands_back_a_finished_job_for_a_saved_list(tmp_path, monkeypatch)
     job_id = discovery.start("Coffee roster", ["k"], roster=[("@crema", ""), ("@pour", "")], saved={"coffee": saved})
     job = discovery.status(job_id)
     assert job["status"] == "done" and job["dataset_id"] == "coffee" and job["reused"] and "2 creators" in job["message"]
+
+
+def test_small_percentages_are_not_grounded_by_the_count_allowance():
+    from demo import ai_explain
+    facts = {"recommended": {"overlap": {"overlap_percent": 20.1}}, "your_roster": {"overlap": {"overlap_percent": 31.7}}}
+    assert not ai_explain.grounded("Your roster overlaps 7.3% and the recommendation 4.8%.", facts, "overlap?")
+    assert ai_explain.grounded("Two creators carry most of it: 20.1% overall.", facts, "overlap?")
+    assert ai_explain.grounded("3 of them overlap.", facts, "overlap?")

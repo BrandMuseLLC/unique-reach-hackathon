@@ -99,13 +99,16 @@ def _numbers(value, out):
 def grounded(answer, facts, question):
     """Every number in the answer must come from the evidence (or the question), allowing the page's own roundings."""
     base = _numbers(facts, set()) | _numbers(question, set())
-    allowed = set(base) | {float(n) for n in range(11)}  # counts like "two creators"
+    variants = set(base)
     for value in base:
         # The page shows 1,234,567 as 1.2M and 45,600 as 45.6K; a share may be quoted with fewer decimals.
-        allowed.update({round(value / 1e6, 1), round(value / 1e6, 2), round(value / 1e3, 1), round(value / 1e3, 2), float(round(value)), round(value, 1)})
+        variants.update({round(value / 1e6, 1), round(value / 1e6, 2), round(value / 1e3, 1), round(value / 1e3, 2), float(round(value)), round(value, 1)})
+    small_counts = {float(n) for n in range(11)}  # "two creators", "3 of them": exact small integers only
     for token in NUMBER.findall(answer):
         number = round(float(token.replace(",", "")), 2)
-        if number not in allowed and round(number, 1) not in allowed and float(round(number)) not in allowed:
+        if number in small_counts and number == float(int(number)):
+            continue
+        if number not in variants and round(number, 1) not in variants and float(round(number)) not in base:
             return False
     return True
 

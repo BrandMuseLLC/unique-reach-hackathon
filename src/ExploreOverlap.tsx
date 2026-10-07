@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { EyebrowRow } from './parts';
 import { whole, type Graph } from './types';
 
-export function ExploreOverlap({ graph: given, aiEnabled = false, onExplain, onGraph, planIds = [] }: { graph?: Graph | null; aiEnabled?: boolean; onExplain?: () => void; onGraph?: (graph: Graph) => void; planIds?: string[] }) {
+export function ExploreOverlap({ graph: given, aiEnabled = false, onExplain, onGraph, planIds = [], error: givenError = '' }: { graph?: Graph | null; aiEnabled?: boolean; onExplain?: () => void; onGraph?: (graph: Graph) => void; planIds?: string[]; error?: string }) {
   const inPlan = new Set(planIds);
-  // The Studio fetches the graph once and passes it down; the legacy layout still lets this component fetch for itself.
+  // The Studio fetches the graph once and passes it down (with any load error); the legacy layout still lets this component fetch for itself.
   const [own, setOwn] = useState<Graph | null>(null);
-  const [error, setError] = useState('');
+  const [ownError, setError] = useState('');
+  const error = givenError || ownError;
   const graph = given === undefined ? own : given;
   useEffect(() => {
     if (given !== undefined) return;

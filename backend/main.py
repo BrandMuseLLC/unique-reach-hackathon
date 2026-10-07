@@ -24,8 +24,15 @@ from .snapshots import create_snapshot_writer
 
 settings = auth_settings()
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
-# Side files the collector writes next to a dataset; never offered as datasets themselves.
-NOT_DATASETS = ("report", "profiles", "headline", "upriver", "ledger", "cache")
+# Side files the collector writes next to a dataset; never offered as datasets themselves. Matched on name shape,
+# not substrings, so a campaign slug that happens to contain "report" or "cache" is still a dataset.
+NOT_DATASET_SUFFIXES = ("-report", ".report", "-profiles", "-headline", "-ledger", "-cache")
+NOT_DATASET_PREFIXES = ("upriver-",)
+
+
+def looks_like_dataset(path: Path) -> bool:
+    stem = path.stem.lower()
+    return not stem.endswith(NOT_DATASET_SUFFIXES) and not stem.startswith(NOT_DATASET_PREFIXES)
 
 
 def dataset_files() -> dict[str, Path]:
@@ -37,7 +44,7 @@ def dataset_files() -> dict[str, Path]:
     candidates = []
     for folder in (DATA_DIR, DATA_DIR / "analyses"):
         if folder.exists():
-            candidates += [p for p in folder.glob("*.json") if not any(word in p.stem.lower() for word in NOT_DATASETS)]
+            candidates += [p for p in folder.glob("*.json") if looks_like_dataset(p)]
     for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
         files.setdefault(path.stem, path.resolve())
     return files
@@ -109,8 +116,8 @@ class PlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     budget: int = Field(ge=0, le=5_000_000)
-    currentRoster: list[str] = Field(default_factory=list, max_length=50)
-    include: list[str] = Field(default_factory=list, max_length=50)
+    currentRoster: list[str] = Field(default_factory=list, max_length=500)
+    include: list[str] = Field(default_factory=list, max_length=500)
     exclude: list[str] = Field(default_factory=list, max_length=500)
     costs: dict[str, int] = Field(default_factory=dict, max_length=1000)
     planningContext: PlanningContext = Field(default_factory=PlanningContext)
@@ -121,8 +128,8 @@ class CampaignInput(BaseModel):
 
     name: str = Field(min_length=1, max_length=80)
     budget: int = Field(ge=0, le=5_000_000)
-    currentRoster: list[str] = Field(default_factory=list, max_length=50)
-    include: list[str] = Field(default_factory=list, max_length=50)
+    currentRoster: list[str] = Field(default_factory=list, max_length=500)
+    include: list[str] = Field(default_factory=list, max_length=500)
     exclude: list[str] = Field(default_factory=list, max_length=500)
     costs: dict[str, int] = Field(default_factory=dict, max_length=1000)
     planningContext: PlanningContext = Field(default_factory=PlanningContext)

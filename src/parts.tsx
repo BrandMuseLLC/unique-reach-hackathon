@@ -1,6 +1,6 @@
 import React from 'react';
 import { ChevronRight, Sparkles } from 'lucide-react';
-import { PLATFORM_LABEL, initialOf, type Platform } from './types';
+import { initialOf, type Platform } from './types';
 
 // Platform glyphs on the black discs the design uses for badges and the sourcing line.
 export function PlatformGlyph({ platform, size = 20 }: { platform: Platform; size?: number }) {
@@ -68,8 +68,4 @@ export function Chip({ active = false, onClick, children, count, disabled = fals
 
 export function Tag({ tone, children }: { tone: 'budget' | 'little' | 'excluded' | 'cap' | 'measured' | 'estimated'; children: React.ReactNode }) {
   return <span className={`app-tag tone-${tone}`}>{children}</span>;
-}
-
-export function platformLabel(platform: Platform) {
-  return PLATFORM_LABEL[platform];
 }

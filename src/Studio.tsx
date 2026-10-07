@@ -42,10 +42,10 @@ const STEPS = [['plan', 'Understanding brief'], ['search', 'Finding channels'], 
 export function parseRoster(text: string): RosterItem[] {
   const rows: RosterItem[] = [];
   for (const raw of text.split(/\r?\n/)) {
-    const line = raw.split('#')[0].trim();
-    if (!line) continue;
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;  // blank or comment line
     const cells = line.split(/[,\t;]/).map((c) => c.trim().replace(/^"|"$/g, ''));
-    const handle = cells[0];
+    const handle = cells[0].slice(0, 200);
     if (!handle || /^(handle|channel|creator|url|link|name|youtube|platform|profile)s?$/i.test(handle)) continue;  // header row
     rows.push({ handle, topic: (cells[1] ?? '').slice(0, 60) });
   }
@@ -90,6 +90,7 @@ export function Studio() {
   const [method, setMethod] = useState<Method | null>(null);
   const [datasetKind, setDatasetKind] = useState('');
   const [graph, setGraph] = useState<Graph | null>(null);
+  const [graphError, setGraphError] = useState('');
   const planRef = useRef<Plan | null>(null);
   const plannedInputsRef = useRef<Inputs | null>(null);
   const requestId = useRef(0);
@@ -158,9 +159,10 @@ export function Studio() {
   useEffect(() => {
     if (!datasetVersion || !observed) { setGraph(null); return; }
     const controller = new AbortController();
+    setGraphError('');
     fetch('/api/overlap', { signal: controller.signal, headers: { 'X-Dataset-Version': datasetVersion } })
-      .then(async (r) => { if (r.ok) setGraph(await r.json()); })
-      .catch(() => { /* the map shows its own loading state */ });
+      .then(async (r) => { if (r.ok) setGraph(await r.json()); else setGraphError('Audience data could not be loaded for this dataset.'); })
+      .catch(() => { if (!controller.signal.aborted) setGraphError('Audience data could not be loaded.'); });
     return () => controller.abort();
   }, [datasetVersion, observed]);
 
@@ -200,7 +202,9 @@ export function Studio() {
       skipAuto.current = true;
       setCreators(payload.creators);
       // Default recommendation size is ten creators, or the whole pool when it is smaller.
-      const count = Math.min(DEFAULT_CREATORS, payload.creators.filter((c) => c.eligibilityStatus !== 'ineligible').length);
+      // A target the size of the whole pool would just hand the list back, so small pools get no target and the planner picks on gain.
+      const poolSize = payload.creators.filter((c) => c.eligibilityStatus !== 'ineligible').length;
+      const count = poolSize > DEFAULT_CREATORS ? DEFAULT_CREATORS : 0;
       const next: Inputs = { budget: UNBOUNDED_BUDGET, currentRoster: payload.defaultCurrentRoster ?? [], include: [], exclude: [],
         costs: Object.fromEntries(payload.creators.map((c) => [c.id, c.baseCost])), planningContext: { ...EMPTY, creatorCount: count } };
       setInputs(next);
@@ -399,14 +403,19 @@ export function Studio() {
       setMessages((m) => [...m, { role: 'assistant', text: `${file.name} has fewer than two creators I can read. Use one YouTube handle, channel id or URL per line, with an optional topic in a second column.`, error: true }]);
       return;
     }
+    if (roster.length > 60) {
+      setMessages((m) => [...m, { role: 'assistant', text: `${file.name} has ${roster.length} creators; a list can hold 60, so only the first 60 are attached.`, error: true }]);
+    }
     setAttachment({ name: file.name, roster: roster.slice(0, 60) });
     setChatOpen(true);
   }
 
-  async function send(text = draft) {
-    const message = text.trim();
+  // Only what is typed in the Muse composer (no argument) can carry the attached list; chips and "Ask Muse why" never start a run.
+  async function send(text?: string) {
+    const fromComposer = text === undefined;
+    const message = (text ?? draft).trim();
     if (chatBusy) return;
-    if (attachment) {
+    if (attachment && fromComposer) {
       // The attached list is the brief: Muse maps overlap for those channels, then the conversation continues on the result.
       const ask = message || `Map audience overlap for the creators in ${attachment.name}`;
       const name = attachment.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
@@ -668,7 +677,7 @@ export function Studio() {
       )}
 
       {route.screen === 'creators' && (
-        <CreatorsScreen creators={creators} inputs={inputs} plan={plan} stale={stale} crossPlatform={crossPlatform} rosterList={rosterList} rosterMissing={rosterMissing} rosterSkipped={rosterSkipped} rosterBasis={rosterBasis} graph={graph} aiEnabled={aiEnabled}
+        <CreatorsScreen creators={creators} inputs={inputs} plan={plan} stale={stale} crossPlatform={crossPlatform} rosterList={rosterList} rosterMissing={rosterMissing} rosterSkipped={rosterSkipped} rosterBasis={rosterBasis} graph={graph} graphError={graphError} aiEnabled={aiEnabled}
           delta={delta} initialFilter={creatorsFilter} statusOf={statusOf} platformOn={platformOn} onUpdate={update} onAsk={(q) => void send(q)} onExplain={() => navigate('methods')} onGraph={setGraph} />
       )}
 

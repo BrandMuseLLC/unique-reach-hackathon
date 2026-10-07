@@ -8,7 +8,7 @@ import { PLATFORMS, PLATFORM_LABEL, compact, pct, platformOf, topicOf, type Crea
 export type RosterStatus = 'excluded' | 'required' | 'recommended' | 'left' | 'none';
 export type CreatorsFilter = 'recommended' | 'yours' | 'left';
 
-export function CreatorsScreen({ creators, inputs, plan, stale, crossPlatform, rosterList, rosterMissing = [], rosterSkipped = [], rosterBasis, graph, aiEnabled, delta, initialFilter, statusOf, platformOn, onUpdate, onAsk, onExplain, onGraph }: {
+export function CreatorsScreen({ creators, inputs, plan, stale, crossPlatform, rosterList, rosterMissing = [], rosterSkipped = [], rosterBasis, graph, graphError = '', aiEnabled, delta, initialFilter, statusOf, platformOn, onUpdate, onAsk, onExplain, onGraph }: {
   creators: Creator[];
   inputs: Inputs;
   plan: Plan | null;
@@ -19,6 +19,7 @@ export function CreatorsScreen({ creators, inputs, plan, stale, crossPlatform, r
   rosterSkipped?: { channel: string; reason: string }[];
   rosterBasis: string;
   graph: Graph | null;
+  graphError?: string;
   aiEnabled: boolean;
   delta: Delta | null;
   initialFilter?: CreatorsFilter;
@@ -155,7 +156,7 @@ export function CreatorsScreen({ creators, inputs, plan, stale, crossPlatform, r
       </section>
 
       {plan?.whyNot && <WhyNotPanel rows={plan.whyNot} stale={stale} crossPlatform={crossPlatform} onExplain={onExplain} />}
-      {creators.some((c) => c.source === 'observed-public') && <ExploreOverlap graph={graph} aiEnabled={aiEnabled} onExplain={onExplain} onGraph={onGraph} planIds={plan?.recommended.ids ?? []} />}
+      {creators.some((c) => c.source === 'observed-public') && <ExploreOverlap graph={graph} error={graphError} aiEnabled={aiEnabled} onExplain={onExplain} onGraph={onGraph} planIds={plan?.recommended.ids ?? []} />}
     </div>
   );
 }
