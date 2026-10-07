@@ -140,3 +140,26 @@ def test_list_runs_can_skip_vendor_lookalikes(tmp_path, monkeypatch):
     block = discovery._crossplatform("cpn", {"metadata": {}, "creators": [], "audience_segments": []}, {"category": "Coffee", "campaign_name": "Coffee", "queries": []}, set(), transport, explicit=externals)
     assert not any(u.endswith("/creators/search") or u.endswith("/categories/search") for u in calls)
     assert [e["handle"] for e in block["external"]] == ["beanqueen"] and block["external"][0]["followers"] == 9000
+
+
+def test_muse_evidence_carries_overlap_and_falls_back_to_the_plan_summary():
+    from demo import ai_explain
+    plan = {"metricLabel": "Estimated unique followers", "budget": 5_000_000, "remainingBudget": 4_000_000,
+            "recommended": {"ids": ["a", "b"], "proxyReach": 1_123_456.7, "spend": 0, "observedCommenterCoverage": 900},
+            "current": {"ids": ["a", "b", "c"], "proxyReach": 1_100_000, "spend": 0},
+            "viewsBaseline": {"ids": ["a", "c"], "proxyReach": 1_000_000, "spend": 0},
+            "steps": [{"creatorName": "A", "marginalProxyReach": 700_000.4, "cost": 1}],
+            "whyNot": [{"creatorName": "C", "reason": "Adds little.", "cost": 1, "alreadyCoveredShare": 0.428, "marginalProxyReach": 12_000, "overlapsWith": []}],
+            "rosterDiagnostics": {"rosters": {"recommended": {"ids": ["a", "b"], "sharedRate": 0.2014, "coverage": 1_123_456, "shared": 280_000, "standalone": 1_400_000},
+                                              "current": {"ids": ["a", "b", "c"], "sharedRate": 0.317, "coverage": 1_100_000, "shared": 500_000, "standalone": 1_600_000},
+                                              "viewsBaseline": {"ids": ["a", "c"], "sharedRate": 0.763, "coverage": 1_000_000, "shared": 900_000, "standalone": 1_900_000}}},
+            "choice": {"headline": "Less overlap without losing reach."}}
+    facts = ai_explain.evidence(plan)
+    assert "budget" not in facts and "spend" not in facts["recommended"]
+    assert facts["recommended"]["overlap"]["overlap_percent"] == 20.1 and facts["your_roster"]["overlap"]["overlap_percent"] == 31.7
+    # The page's own roundings count as grounded: 20.1%, 1.1M, 43%.
+    assert ai_explain.grounded("The recommendation overlaps 20.1% versus your roster's 31.7%, reaching 1.1M people.", facts, "how much overlap?")
+    assert ai_explain.grounded("C is 43% covered already.", facts, "why not C?")
+    assert not ai_explain.grounded("That saves you $4,200.", facts, "how much overlap?")
+    text = ai_explain.summary(plan)
+    assert text.startswith("Recommended: 2 creators, 20.1% overlap, 1,123,457 reached") and "Your roster: 3 creators, 31.7% overlap" in text and text.endswith("Less overlap without losing reach.")
