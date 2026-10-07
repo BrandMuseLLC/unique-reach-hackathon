@@ -275,6 +275,13 @@
 .app-muse-input input { flex: 1; min-width: 0; height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--app-card-border); background: var(--app-field); color: var(--app-text); font: inherit; font-size: 14px; outline: none; }
 .app-muse-input input:focus { border-color: var(--purple-tint-60); box-shadow: var(--shadow-focus); }
 .app-send { width: 42px; height: 42px; flex: none; border: 0; border-radius: 12px; background: linear-gradient(135deg, var(--app-fab-start), var(--app-fab-end)); color: #fff; display: grid; place-items: center; }
+.app-attach { width: 42px; height: 42px; flex: none; border: 1px solid var(--app-card-border); border-radius: 12px; background: var(--app-field); color: var(--app-muted); display: grid; place-items: center; }
+.app-attach:hover:not(:disabled) { color: var(--app-text); border-color: var(--purple-tint-35); }
+.app-attach:disabled { color: var(--slate-500); }
+.app-attachment { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px 0 12px; border-radius: 10px; border: 1px solid var(--purple-tint-35); background: var(--app-chip); color: var(--app-text-2); font-size: 12px; }
+.app-attachment button { width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--app-muted); display: grid; place-items: center; }
+.app-attachment button:hover { background: var(--white-05); color: var(--app-text); }
+.app-msg-file { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; opacity: 0.85; }
 .app-send:disabled { background: var(--app-inset); color: var(--slate-500); }
 
 /* Focus */

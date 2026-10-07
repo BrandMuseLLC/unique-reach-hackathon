@@ -291,11 +291,19 @@ class ActivateRequest(BaseModel):
     id: str = Field(min_length=1, max_length=120)
 
 
+class RosterItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    handle: str = Field(min_length=1, max_length=200)
+    topic: str = Field(default='', max_length=60)
+
+
 class DiscoverRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     prompt: str = Field(min_length=3, max_length=300)
     expandWithUpriver: bool = False
     crossPlatform: bool = False
+    # A creator list (YouTube handles, channel ids or URLs) skips the AI search and maps overlap for exactly these channels.
+    roster: list[RosterItem] = Field(default_factory=list, max_length=60)
 
 
 class ProfileRef(BaseModel):
@@ -335,7 +343,8 @@ def list_datasets(_: AuthenticatedUser = Depends(user_dependency)):
         rows.append({'id': dataset_id, 'name': campaign.get('name') or meta.get('title') or dataset_id,
                      'prompt': meta.get('prompt'), 'dataDate': meta.get('data_date'), 'active': dataset_id == active_dataset_id})
     return {'datasets': rows, 'active': active_dataset_id,
-            'discovery': {'enabled': bool(os.environ.get('YOUTUBE_API_KEYS', '').strip()) and canonical_ai_status()['enabled']}}
+            'discovery': {'enabled': bool(os.environ.get('YOUTUBE_API_KEYS', '').strip()) and canonical_ai_status()['enabled']},
+            'roster': {'enabled': bool(os.environ.get('YOUTUBE_API_KEYS', '').strip())}}
 
 
 @app.post('/api/datasets/activate')
@@ -362,13 +371,14 @@ def restricted_names() -> set[str]:
 
 @app.post('/api/discover')
 def start_discovery(request: DiscoverRequest, _: AuthenticatedUser = Depends(user_dependency)):
-    if not canonical_ai_status()['enabled']:
-        return JSONResponse(status_code=503, content={'error': 'Creator search needs live AI to be configured.'})
+    if not request.roster and not canonical_ai_status()['enabled']:
+        return JSONResponse(status_code=503, content={'error': 'Creator search needs live AI to be configured. You can still upload a creator list.'})
     try:
         if (request.expandWithUpriver or request.crossPlatform) and not upriver.status()['configured']:
             raise PlanError('Add UPRIVER_API_KEY to the server .env to use Upriver lookalikes.')
         job_id = discovery.start(request.prompt, os.environ.get('YOUTUBE_API_KEYS', '').split(','), restricted_names(),
-                                 expand_with_upriver=request.expandWithUpriver, cross_platform=request.crossPlatform)
+                                 expand_with_upriver=request.expandWithUpriver, cross_platform=request.crossPlatform,
+                                 roster=[(r.handle, r.topic) for r in request.roster] or None)
     except PlanError as exc:
         return JSONResponse(status_code=400, content={'error': str(exc)})
     return {'job': discovery.status(job_id)}

@@ -66,7 +66,9 @@ export type GraphPair = { a: string; b: string; sharedCommenters: number; jaccar
 export type Cluster = { id: string; members: string[]; label: string; labelSource: 'rule' | 'model'; summary?: string };
 export type Graph = { datasetVersion: string; nodes: GraphNode[]; pairs: GraphPair[]; metric: string; clusters?: Cluster[]; unit?: string };
 
-export type ChatMessage = { role: 'user' | 'assistant'; text: string; change?: { changed: boolean; text: string }; section?: string | null; discoverPrompt?: string | null; error?: boolean };
+export type ChatMessage = { role: 'user' | 'assistant'; text: string; change?: { changed: boolean; text: string }; section?: string | null; discoverPrompt?: string | null; error?: boolean; attachment?: string };
+export type RosterItem = { handle: string; topic: string };
+export type Attachment = { name: string; roster: RosterItem[] };
 
 export const PLATFORM_LABEL: Record<Platform, string> = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram' };
 // Planner groups ("communities") in a cross-platform dataset are the platform labels.

@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Bell, Check, ChevronRight, CircleHelp, Home, Loader2, Map as MapIcon, Send, SlidersHorizontal, Sparkles, User, Users } from 'lucide-react';
+import { BarChart3, Bell, Check, ChevronRight, CircleHelp, Home, Loader2, Map as MapIcon, Send, SlidersHorizontal, Sparkles, Upload, User, Users } from 'lucide-react';
 import { CreatorsScreen, type RosterStatus } from './CreatorsScreen';
 import { MethodsScreen } from './MethodsScreen';
 import { MusePanel } from './MusePanel';
 import { Avatar, Chip, EyebrowRow, Insight, Mark, PlatformGlyph, StatCard } from './parts';
 import {
   PLATFORMS, PLATFORM_COMMUNITY, PLATFORM_LABEL, compact, money, pct, platformOf, topicOf,
-  type Campaign, type ChatMessage, type Creator, type Dataset, type Evidence, type Graph, type Inputs, type Job, type Method, type Plan, type Platform, type RosterDiag, type SavedCampaign,
+  type Attachment, type Campaign, type ChatMessage, type Creator, type Dataset, type Evidence, type Graph, type Inputs, type Job, type Method, type Plan, type Platform, type RosterDiag, type RosterItem, type SavedCampaign,
 } from './types';
 import whiteWordmark from '../brandmuse/assets/brand-muse-wordmark-white.jpg';
 import './studio.css';
@@ -34,7 +34,21 @@ const SECTION_TARGET: Record<string, { screen: Screen; anchor?: string; label: s
   whynot: { screen: 'creators', anchor: 'whynot', label: 'Why not' },
   method: { screen: 'methods', label: 'Methods' },
 };
-const STEPS = [['plan', 'Understanding brief'], ['search', 'Searching'], ['videos', 'Reading videos'], ['comments', 'Sampling comments'], ['build', 'Mapping overlap']] as const;
+const STEPS = [['plan', 'Understanding brief'], ['search', 'Finding channels'], ['videos', 'Reading videos'], ['comments', 'Sampling comments'], ['build', 'Mapping overlap']] as const;
+
+/** A creator list from a CSV or text file: one YouTube handle, channel id or URL per line, optional topic in a second column. */
+export function parseRoster(text: string): RosterItem[] {
+  const rows: RosterItem[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.split('#')[0].trim();
+    if (!line) continue;
+    const cells = line.split(/[,\t;]/).map((c) => c.trim().replace(/^"|"$/g, ''));
+    const handle = cells[0];
+    if (!handle || /^(handle|channel|creator|url|name|youtube)s?$/i.test(handle)) continue;  // header row
+    rows.push({ handle, topic: (cells[1] ?? '').slice(0, 60) });
+  }
+  return rows;
+}
 
 function readRoute(): Route {
   const [screen, anchor = ''] = window.location.hash.replace(/^#\/?/, '').split('/');
@@ -80,6 +94,8 @@ export function Studio() {
   const [aiEnabled, setAiEnabled] = useState(false);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [discoveryEnabled, setDiscoveryEnabled] = useState(false);
+  const [rosterEnabled, setRosterEnabled] = useState(false);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [prompt, setPrompt] = useState('');
   const [upriverStatus, setUpriverStatus] = useState<UpriverStatus | null>(null);
   const [job, setJob] = useState<Job | null>(null);
@@ -150,9 +166,10 @@ export function Studio() {
 
   async function refreshDatasets() {
     try {
-      const payload = await api<{ datasets: Dataset[]; discovery: { enabled: boolean } }>('/api/datasets');
+      const payload = await api<{ datasets: Dataset[]; discovery: { enabled: boolean }; roster?: { enabled: boolean } }>('/api/datasets');
       setDatasets(payload.datasets);
       setDiscoveryEnabled(payload.discovery.enabled);
+      setRosterEnabled(Boolean(payload.roster?.enabled));
     } catch { /* datasets are optional in synthetic mode */ }
   }
 
@@ -312,14 +329,17 @@ export function Studio() {
     }
   }
 
-  async function discover(text = prompt) {
+  // A prompt searches YouTube; a prompt with a roster maps overlap for exactly the listed channels and reports back in Muse.
+  async function discover(text = prompt, roster?: RosterItem[]) {
     if (!text.trim()) return;
-    setPrompt(text);
+    if (!roster) setPrompt(text);
     setError('');
     navigate('overview');
     try {
-      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: false, crossPlatform: Boolean(upriverStatus?.configured) });
+      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: false, crossPlatform: Boolean(upriverStatus?.configured) && !roster,
+        ...(roster ? { roster } : {}) });
       setJob(started.job);
+      if (roster) setChatBusy(true);
       let failures = 0;
       const poll = async () => {
         let current: { job: Job };
@@ -330,25 +350,60 @@ export function Studio() {
           failures += 1;
           if (failures < 5) { window.setTimeout(() => void poll(), 3000); return; }
           setJob((j) => (j ? { ...j, status: 'error', error: 'Lost contact with the server during the search. Refresh to check your searches.' } : j));
+          setChatBusy(false);
           return;
         }
         setJob(current.job);
         if (current.job.status === 'running') { window.setTimeout(() => void poll(), 1500); return; }
+        setChatBusy(false);
+        if (current.job.status === 'error') {
+          if (roster) setMessages((m) => [...m, { role: 'assistant', text: current.job.error ?? 'Mapping your list failed.', error: true }]);
+          return;
+        }
         if (current.job.status === 'done' && current.job.dataset_id) {
           await activate(current.job.dataset_id);
-          setMessages((m) => [...m, { role: 'assistant', text: `${current.job.message}. The plan is now for “${text.trim()}”.`, section: 'overview' }]);
+          setMessages((m) => [...m, roster
+            ? { role: 'assistant', text: `${current.job.message}. The recommended roster from your list is on the Overview and every creator is in the Creators tab. ${aiEnabled ? 'Tell me how to change it: a budget, a creator count, someone to require or drop.' : 'Use the sliders in the prompt field to set the budget and creator count.'}`, section: 'overview' }
+            : { role: 'assistant', text: `${current.job.message}. The plan is now for “${text.trim()}”.`, section: 'overview' }]);
         }
       };
       window.setTimeout(() => void poll(), 1200);
     } catch (e) {
       setJob(null);
-      setError(e instanceof Error ? e.message : 'Creator search failed.');
+      setChatBusy(false);
+      if (roster) setMessages((m) => [...m, { role: 'assistant', text: e instanceof Error ? e.message : 'Mapping your list failed.', error: true }]);
+      else setError(e instanceof Error ? e.message : 'Creator search failed.');
     }
+  }
+
+  async function attachRoster(file: File) {
+    const roster = parseRoster(await file.text());
+    if (roster.length < 2) {
+      setMessages((m) => [...m, { role: 'assistant', text: `${file.name} has fewer than two creators I can read. Use one YouTube handle, channel id or URL per line, with an optional topic in a second column.`, error: true }]);
+      return;
+    }
+    setAttachment({ name: file.name, roster: roster.slice(0, 60) });
+    setChatOpen(true);
   }
 
   async function send(text = draft) {
     const message = text.trim();
-    if (!message || chatBusy) return;
+    if (chatBusy) return;
+    if (attachment) {
+      // The attached list is the brief: Muse maps overlap for those channels, then the conversation continues on the result.
+      const ask = message || `Map audience overlap for the creators in ${attachment.name}`;
+      const name = attachment.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
+      const brief = (message.length >= 3 ? message : name.length >= 3 ? name : 'Creator list').slice(0, 300);
+      setChatOpen(true);
+      setDraft('');
+      setMessages((m) => [...m, { role: 'user', text: ask, attachment: `${attachment.name} · ${attachment.roster.length} creators` },
+        { role: 'assistant', text: `Reading ${attachment.roster.length} creators from your list. I look up each channel, sample who comments on their recent videos and map where those audiences overlap. This takes a few minutes; progress is on the Overview.`, section: 'overview' }]);
+      const roster = attachment.roster;
+      setAttachment(null);
+      await discover(brief, roster);
+      return;
+    }
+    if (!message) return;
     setChatOpen(true);
     setDraft('');
     const history = messages.slice(-6).map((m) => ({ role: m.role, text: m.text }));
@@ -602,7 +657,8 @@ export function Studio() {
       {route.screen === 'methods' && <MethodsScreen method={method} />}
 
       <MusePanel open={chatOpen} onToggle={setChatOpen} messages={messages} busy={chatBusy} aiEnabled={aiEnabled} draft={draft} onDraft={setDraft} onSend={(t) => void send(t)}
-        suggestions={suggestions} sectionLabel={(s) => SECTION_TARGET[s]?.label ?? null} onSection={goToSection} discoveryEnabled={discoveryEnabled && job?.status !== 'running'} onDiscover={(p) => void discover(p)} />
+        suggestions={suggestions} sectionLabel={(s) => SECTION_TARGET[s]?.label ?? null} onSection={goToSection} discoveryEnabled={discoveryEnabled && job?.status !== 'running'} onDiscover={(p) => void discover(p)}
+        rosterEnabled={rosterEnabled && job?.status !== 'running'} attachment={attachment} onAttach={(f) => void attachRoster(f)} onDetach={() => setAttachment(null)} />
     </div>
   );
 }
