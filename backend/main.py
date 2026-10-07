@@ -23,29 +23,46 @@ from .snapshots import create_snapshot_writer
 
 
 settings = auth_settings()
-real_provider = (crossplatform.load_provider(json.loads(Path(os.environ["MUSE_OBSERVED_DATA"]).read_text())) if os.environ.get("MUSE_OBSERVED_DATA")
-                 else RealDataProvider.bundled()) if os.environ.get("MUSE_DATASET") == "observed" else None
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+# Side files the collector writes next to a dataset; never offered as datasets themselves.
+NOT_DATASETS = ("report", "profiles", "headline", "upriver", "ledger", "cache")
 
 
 def dataset_files() -> dict[str, Path]:
-    """Observed aggregates available locally: the startup dataset, known demo files and saved creator searches."""
+    """Observed aggregates available locally: the startup dataset, built datasets in data/ and saved creator searches, newest first."""
     files: dict[str, Path] = {}
     if os.environ.get("MUSE_OBSERVED_DATA"):
         path = Path(os.environ["MUSE_OBSERVED_DATA"]).resolve()
         files[path.stem] = path
-    for name in ("home-coffee-aggregate.json", "exposure-aggregate.json"):
-        if (DATA_DIR / name).exists():
-            files.setdefault(Path(name).stem, (DATA_DIR / name).resolve())
-    analyses = DATA_DIR / "analyses"
-    if analyses.exists():
-        for path in sorted(analyses.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            if not path.name.endswith(".report.json"):
-                files.setdefault(path.stem, path.resolve())
+    candidates = []
+    for folder in (DATA_DIR, DATA_DIR / "analyses"):
+        if folder.exists():
+            candidates += [p for p in folder.glob("*.json") if not any(word in p.stem.lower() for word in NOT_DATASETS)]
+    for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
+        files.setdefault(path.stem, path.resolve())
     return files
 
 
-active_dataset_id = Path(os.environ["MUSE_OBSERVED_DATA"]).stem if os.environ.get("MUSE_OBSERVED_DATA") and real_provider is not None else None
+def _startup_dataset():
+    """The dataset the server opens with: MUSE_OBSERVED_DATA, else the bundled sample, else the newest local dataset."""
+    if os.environ.get("MUSE_DATASET") != "observed":
+        return None, None
+    if os.environ.get("MUSE_OBSERVED_DATA"):
+        path = Path(os.environ["MUSE_OBSERVED_DATA"]).resolve()
+        return crossplatform.load_provider(json.loads(path.read_text())), path.stem
+    try:
+        return RealDataProvider.bundled(), None
+    except FileNotFoundError:
+        pass
+    for dataset_id, path in dataset_files().items():
+        try:
+            return crossplatform.load_provider(json.loads(path.read_text())), dataset_id
+        except (PlanError, OSError, ValueError):
+            continue
+    raise SystemExit("MUSE_DATASET=observed but no dataset was found. Set MUSE_OBSERVED_DATA to a built aggregate, or run a creator search first.")
+
+
+real_provider, active_dataset_id = _startup_dataset()
 CREATOR_METRIC_LABELS = {
     "views": "Expected video views",
     "price": "Sponsorship fee (USD)",
