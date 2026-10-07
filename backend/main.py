@@ -94,8 +94,8 @@ class PlanRequest(BaseModel):
     budget: int = Field(ge=0, le=5_000_000)
     currentRoster: list[str] = Field(default_factory=list, max_length=50)
     include: list[str] = Field(default_factory=list, max_length=50)
-    exclude: list[str] = Field(default_factory=list, max_length=50)
-    costs: dict[str, int] = Field(default_factory=dict, max_length=100)
+    exclude: list[str] = Field(default_factory=list, max_length=500)
+    costs: dict[str, int] = Field(default_factory=dict, max_length=1000)
     planningContext: PlanningContext = Field(default_factory=PlanningContext)
 
 
@@ -106,8 +106,8 @@ class CampaignInput(BaseModel):
     budget: int = Field(ge=0, le=5_000_000)
     currentRoster: list[str] = Field(default_factory=list, max_length=50)
     include: list[str] = Field(default_factory=list, max_length=50)
-    exclude: list[str] = Field(default_factory=list, max_length=50)
-    costs: dict[str, int] = Field(default_factory=dict, max_length=100)
+    exclude: list[str] = Field(default_factory=list, max_length=500)
+    costs: dict[str, int] = Field(default_factory=dict, max_length=1000)
     planningContext: PlanningContext = Field(default_factory=PlanningContext)
     campaignBrief: dict[str, object] | None = None
     datasetVersion: str | None = None

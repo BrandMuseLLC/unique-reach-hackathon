@@ -94,6 +94,8 @@ export function Studio() {
   const popoverRef = useRef<HTMLDivElement>(null);
 
   const key = (i: Inputs) => JSON.stringify(i);
+  // The server fills in default quotes itself and caps the costs map, so only send the quotes you changed.
+  const outbound = (i: Inputs): Inputs => ({ ...i, costs: Object.fromEntries(Object.entries(i.costs).filter(([id, v]) => byId.get(id) && v !== byId.get(id)!.baseCost)) });
   const stale = Boolean(plan && plannedKey !== key(inputs));
   const names = useMemo(() => Object.fromEntries(creators.map((c) => [c.id, c.name])), [creators]);
   const byId = useMemo(() => new Map(creators.map((c) => [c.id, c])), [creators]);
@@ -184,7 +186,7 @@ export function Studio() {
   async function saveCurrentCampaign() {
     setSaving(true);
     try {
-      await api('/api/campaigns', { name: saveName.trim(), ...inputsRef.current });
+      await api('/api/campaigns', { name: saveName.trim(), ...outbound(inputsRef.current) });
       const result = await api<{ campaigns: SavedCampaign[] }>('/api/campaigns');
       setSaved(result.campaigns);
       setSaveStatus('Saved.');
@@ -231,7 +233,7 @@ export function Studio() {
     setLoading(true);
     setError('');
     try {
-      const result = await api<Plan>('/api/plan', next);
+      const result = await api<Plan>('/api/plan', outbound(next));
       if (id !== requestId.current) return;
       applyPlan(next, result);
     } catch (e) {
@@ -355,7 +357,7 @@ export function Studio() {
     const sent = inputsRef.current;
     try {
       const reply = await api<{ intent: string; reply: string; section: string | null; discoverPrompt?: string | null; inputs?: Inputs; plan?: Plan; change?: { changed: boolean; text: string } }>(
-        '/api/assistant', { message, inputs: sent, history });
+        '/api/assistant', { message, inputs: outbound(sent), history });
       if (reply.inputs && reply.plan && key(inputsRef.current) !== key(sent)) {
         setMessages((m) => [...m, { role: 'assistant', text: 'You changed the plan while I was working, so I didn’t apply my change over yours. Ask again and I’ll start from your latest settings.', error: true }]);
         return;
