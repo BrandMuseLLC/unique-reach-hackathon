@@ -412,6 +412,8 @@ class CrossPlatformProvider:
         return {"campaign": self.campaign, "datasetLabel": self.dataset_label(), "datasetKind": "crossplatform", "datasetVersion": self.dataset_version,
                 "metricLabel": "Estimated unique followers", "creatorMetricLabels": {"views": "Followers", "price": "Quote (USD)", "rawViews": "Total followers"},
                 "creators": rows, "defaultCurrentRoster": roster, "defaultBudget": budget, "defaultRosterBasis": basis, "rosterList": bool(self.metadata.get("roster")),
+                "rosterMissing": list((self.metadata.get("roster") or {}).get("missing") or []),
+                "rosterSkipped": list((self.metadata.get("roster") or {}).get("skipped") or []),
                 "provenance": {"kind": "crossplatform"}, "method": self.method(),
                 "evidence": {"medianSampledCommenters": median, "eligibleCreators": len(self.eligible), "thinCreators": len(self.thin),
                              "strength": "moderate"}}

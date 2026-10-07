@@ -80,6 +80,8 @@ export function Studio() {
   const [creators, setCreators] = useState<Creator[]>([]);
   const [inputs, setInputs] = useState<Inputs>({ budget: UNBOUNDED_BUDGET, currentRoster: [], include: [], exclude: [], costs: {}, planningContext: EMPTY });
   const [rosterList, setRosterList] = useState(false);
+  const [rosterMissing, setRosterMissing] = useState<string[]>([]);
+  const [rosterSkipped, setRosterSkipped] = useState<{ channel: string; reason: string }[]>([]);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [plannedKey, setPlannedKey] = useState('');
   const [delta, setDelta] = useState<Delta | null>(null);
@@ -179,7 +181,7 @@ export function Studio() {
   async function loadDataset() {
     setError('');
     try {
-      const payload = await api<{ campaign: Campaign; creators: Creator[]; datasetVersion: string; datasetKind?: string; method?: Method; defaultCurrentRoster?: string[]; evidence?: Evidence; defaultRosterBasis?: string; rosterList?: boolean }>('/api/creators');
+      const payload = await api<{ campaign: Campaign; creators: Creator[]; datasetVersion: string; datasetKind?: string; method?: Method; defaultCurrentRoster?: string[]; evidence?: Evidence; defaultRosterBasis?: string; rosterList?: boolean; rosterMissing?: string[]; rosterSkipped?: { channel: string; reason: string }[] }>('/api/creators');
       pageDataset = payload.datasetVersion;
       setDatasetVersion(payload.datasetVersion);
       setSaveName(`${payload.campaign.name} plan`.slice(0, 80));
@@ -190,6 +192,8 @@ export function Studio() {
       setMethod(payload.method ?? null);
       setRosterBasis((payload.defaultRosterBasis ?? '').replace(/ that fit the budget/g, ''));
       setRosterList(Boolean(payload.rosterList));
+      setRosterMissing(payload.rosterMissing ?? []);
+      setRosterSkipped(payload.rosterSkipped ?? []);
       setDelta(null);
       planRef.current = null;
       plannedInputsRef.current = null;
@@ -658,7 +662,7 @@ export function Studio() {
       )}
 
       {route.screen === 'creators' && (
-        <CreatorsScreen creators={creators} inputs={inputs} plan={plan} stale={stale} crossPlatform={crossPlatform} rosterList={rosterList} rosterBasis={rosterBasis} graph={graph} aiEnabled={aiEnabled}
+        <CreatorsScreen creators={creators} inputs={inputs} plan={plan} stale={stale} crossPlatform={crossPlatform} rosterList={rosterList} rosterMissing={rosterMissing} rosterSkipped={rosterSkipped} rosterBasis={rosterBasis} graph={graph} aiEnabled={aiEnabled}
           delta={delta} initialFilter={creatorsFilter} statusOf={statusOf} platformOn={platformOn} onUpdate={update} onAsk={(q) => void send(q)} onExplain={() => navigate('methods')} onGraph={setGraph} />
       )}
 

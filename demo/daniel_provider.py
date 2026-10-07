@@ -94,7 +94,9 @@ class RealDataProvider:
         median_sample=samples[len(samples)//2] if samples else 0
         return {'campaign':self.campaign,'datasetLabel':self.dataset_label,'datasetKind':'observed','datasetVersion':self.dataset_version,
                 'metricLabel':self.metric_label,'creatorMetricLabels':self.creator_metric_labels,'creators':rows,'defaultCurrentRoster':roster,
-                'defaultBudget':budget,'defaultRosterBasis':self.default_roster_basis,'rosterList':bool(self.planner.metadata.get('roster')),'provenance':self.public_provenance(),
+                'defaultBudget':budget,'defaultRosterBasis':self.default_roster_basis,'rosterList':bool(self.planner.metadata.get('roster')),
+                'rosterMissing':list((self.planner.metadata.get('roster') or {}).get('missing') or []),
+                'rosterSkipped':list((self.planner.metadata.get('roster') or {}).get('skipped') or []),'provenance':self.public_provenance(),
                 'evidence':{'medianSampledCommenters':median_sample,'eligibleCreators':len(self.eligible),'thinCreators':len(self.thin),
                             'strength':'strong' if median_sample>=300 else 'moderate' if median_sample>=100 else 'thin'}}
 

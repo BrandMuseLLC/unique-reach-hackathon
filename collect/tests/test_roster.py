@@ -66,7 +66,9 @@ def test_roster_run_skips_the_model_and_maps_exactly_the_listed_channels(tmp_pat
     assert job["status"] == "done", job
     data = json.loads((tmp_path / (job["dataset_id"] + ".json")).read_text())
     assert {c["name"] for c in data["creators"]} == {"Crema Lab", "Pour Daily", "Shots"}  # small channels are kept: the user chose them
-    assert data["metadata"]["roster"] == {"requested": 4, "found": 3, "missing": ["@nobodyhere"]}
+    roster_meta = data["metadata"]["roster"]
+    assert (roster_meta["requested"], roster_meta["found"], roster_meta["missing"], roster_meta["skipped"]) == (4, 3, ["@nobodyhere"], [])
+    assert data["metadata"]["min_commenters"] == 10
     assert data["metadata"]["queries"] == []
     assert data["metadata"]["campaign"]["category"] == "Coffee gear"
     topics = {c["name"]: c["community"] for c in data["creators"]}

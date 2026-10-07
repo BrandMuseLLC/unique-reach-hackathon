@@ -471,8 +471,11 @@ def _run(job_id, prompt, keys, restricted, transport, expand_with_upriver=False,
             raise PlanError("Too few creators had public comments to map overlap. " + ("Add more creators to the list." if roster else "Try a broader description."))
         agg["metadata"]["prompt"] = prompt
         if roster:
-            agg["metadata"]["roster"] = {"requested": len(roster), "found": len(chosen), "missing": missing}
-        agg["metadata"]["min_commenters"] = int(os.environ.get("DISCOVERY_MIN_COMMENTERS", "25"))
+            # Channels that resolved but yielded no public comments never reach the planner; the list keeps their names and why.
+            agg["metadata"]["roster"] = {"requested": len(roster) + len(externals or []), "found": len(chosen), "missing": missing,
+                                         "skipped": [{"channel": s.get("channel"), "reason": s.get("reason")} for s in report.get("skipped_channels", [])]}
+        # A searched pool can afford to set thin channels aside; a user's own list keeps every measurable channel on the board.
+        agg["metadata"]["min_commenters"] = int(os.environ.get("ROSTER_MIN_COMMENTERS", "10")) if roster else int(os.environ.get("DISCOVERY_MIN_COMMENTERS", "25"))
         agg["metadata"]["upriver_lookalikes"] = sorted(lookalike_ids & {c["id"] for c in agg["creators"]})
         cross_note = None
         agg["metadata"]["upriver_credits"] = upriver_credits
