@@ -186,7 +186,9 @@ class RealDataProvider:
         if meta.get('roster'):
             # The user uploaded this list: the whole list is their roster, and the recommendation is the lower-overlap subset of it.
             self.default_roster_basis='The creators in your list.'
-            return 10000,[c['id'] for c in self.planner.creators if c['id'] in self.eligible]
+            # Upriver lookalikes added beside the list are suggestions, never the user's own creators.
+            lookalikes=set(meta.get('upriver_lookalikes') or [])
+            return 10000,[c['id'] for c in self.planner.creators if c['id'] in self.eligible and c['id'] not in lookalikes]
         if not meta.get('prompt'):
             self.default_roster_basis='Top creators by historical views that fit the budget.'
             baseline=self.planner.optimize({'budget':10000,'objective':'viewer_proxy','exclude':[c['id'] for c in self.planner.creators if c['id'] not in self.eligible]})['baselines']['top_views']

@@ -408,7 +408,10 @@ class CrossPlatformProvider:
             # The user uploaded this list: the list itself is their roster (YouTube channels plus the Instagram/TikTok rows they named),
             # never the lookalikes Upriver search added; the recommendation is the lower-overlap subset of it.
             listed = {str(h).lower() for h in (self.metadata["roster"].get("listed") or [])}
-            mine = [c for c in pool if c["platform"] == "youtube" or not listed or str(c.get("url") or "").rstrip("/").lower() in listed]
+            # Upriver lookalikes of the list's YouTube channels are suggestions on the board, not the user's creators.
+            lookalikes = set(self.metadata.get("upriver_lookalikes") or [])
+            mine = [c for c in pool if c["id"] not in lookalikes and (
+                c["platform"] == "youtube" or not listed or str(c.get("url") or "").rstrip("/").lower() in listed)]
             roster, basis = [c["id"] for c in mine], "The creators in your list."
         samples = sorted(c["commenter_count"] for c in pool if c["platform"] == "youtube")
         median = samples[len(samples) // 2] if samples else 0

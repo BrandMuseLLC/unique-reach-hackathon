@@ -197,3 +197,17 @@ def test_small_percentages_are_not_grounded_by_the_count_allowance():
     assert not ai_explain.grounded("Your roster overlaps 7.3% and the recommendation 4.8%.", facts, "overlap?")
     assert ai_explain.grounded("Two creators carry most of it: 20.1% overall.", facts, "overlap?")
     assert ai_explain.grounded("3 of them overlap.", facts, "overlap?")
+
+
+def test_upriver_lookalikes_beside_a_list_are_not_counted_as_your_creators(tmp_path, monkeypatch):
+    """A list run can add Upriver YouTube lookalikes; 'Your creators' must stay the list (28 shown for a 20-row list, 2026-10-13)."""
+    from demo import crossplatform
+
+    test_roster_run_skips_the_model_and_maps_exactly_the_listed_channels(tmp_path, monkeypatch)
+    path = next(p for p in tmp_path.glob("*.json"))
+    data = json.loads(path.read_text())
+    shots = next(c["id"] for c in data["creators"] if c["name"] == "Shots")
+    data["metadata"]["upriver_lookalikes"] = [shots]
+    payload = crossplatform.load_provider(data).creators_payload()
+    assert shots not in payload["defaultCurrentRoster"]
+    assert len(payload["defaultCurrentRoster"]) == 2
