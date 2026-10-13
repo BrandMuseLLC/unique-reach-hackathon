@@ -93,8 +93,9 @@ def _crossplatform(job_id, agg, plan, restricted, upriver_transport=None, explic
         external.append(dict(row))
     listed = {e["url"].rstrip("/").lower() for e in external} | {e["id"] for e in external}
     categories = [plan.get("category") or plan["campaign_name"]]
-    # A user's list can opt out of vendor-found lookalikes (ROSTER_SEARCH_LOOKALIKES=false): only listed creators are profiled.
-    search = not (explicit is not None and os.environ.get("ROSTER_SEARCH_LOOKALIKES", "true").strip().lower() in ("false", "0", "no"))
+    # An uploaded list is the user's creator list: only listed creators are profiled, and no vendor-found creators are added.
+    # ROSTER_SEARCH_LOOKALIKES=true opts a list back into Upriver search for similar Instagram/TikTok creators.
+    search = explicit is None or os.environ.get("ROSTER_SEARCH_LOOKALIKES", "false").strip().lower() in ("true", "1", "yes")
     ids = upriver.category_ids(plan.get("category") or plan["campaign_name"], transport=upriver_transport) if search else []  # free
     query = plan["queries"][0][0] if plan.get("queries") else plan["campaign_name"]
     for platform in ("instagram", "tiktok") if search else ():

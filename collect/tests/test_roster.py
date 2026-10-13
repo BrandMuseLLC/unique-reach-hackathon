@@ -114,6 +114,7 @@ def test_listed_social_creators_are_profiled_first_and_sized_from_upriver(tmp_pa
         return {"channels": [{"platform": "instagram", "handle": "latte.lab", "display_name": "Latte Lab", "url": "https://www.instagram.com/latte.lab/", "follower_count": 42000}],
                 "audience": {"status": "limited_coverage", "gender": {"value": "female", "percentage": 61}}}
 
+    monkeypatch.setenv("ROSTER_SEARCH_LOOKALIKES", "true")  # opted in: the list's creators come first, search fills around them
     discovery._jobs["cpx"] = {"id": "cpx", "status": "running"}
     _, externals = discovery.split_roster(["https://www.instagram.com/latte.lab/"])
     block = discovery._crossplatform("cpx", {"metadata": {}, "creators": [], "audience_segments": []},
@@ -124,10 +125,11 @@ def test_listed_social_creators_are_profiled_first_and_sized_from_upriver(tmp_pa
     assert any("latte.lab" in u for u in looked_up)
 
 
-def test_list_runs_can_skip_vendor_lookalikes(tmp_path, monkeypatch):
+def test_an_uploaded_list_is_only_the_listed_creators_by_default(tmp_path, monkeypatch):
+    """A 20-row list showed 28 creators once Upriver search added similar ones (2026-10-13); a list is now only the list."""
     from collect.tests.test_studio import _upriver_env
     _upriver_env(tmp_path, monkeypatch, cap="1000")
-    monkeypatch.setenv("ROSTER_SEARCH_LOOKALIKES", "false")
+    monkeypatch.delenv("ROSTER_SEARCH_LOOKALIKES", raising=False)
     calls = []
 
     def transport(req):
