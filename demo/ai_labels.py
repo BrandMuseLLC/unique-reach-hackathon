@@ -44,9 +44,11 @@ def label_clusters(clusters, creators_by_id, transport=None):
     body = json.dumps({"clusters": evidence})
     if provider == "anthropic":
         url = "https://api.anthropic.com/v1/messages"
-        payload = {"model": model, "max_tokens": 1200, "system": SYSTEM, "messages": [{"role": "user", "content": body}],
+        payload = {"model": model, "max_tokens": 8000, "output_config": {"effort": "low"},
+                   "system": SYSTEM + "\n\nRespond only by calling the name_clusters tool. Do not answer in prose.",
+                   "messages": [{"role": "user", "content": body}],
                    "tools": [{"name": "name_clusters", "description": "Return one name and summary per cluster.", "input_schema": schema(ids)}],
-                   "tool_choice": {"type": "tool", "name": "name_clusters"}}
+                   "tool_choice": {"type": "auto", "disable_parallel_tool_use": True}}
         headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
     elif provider == "gemini":
         url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % model

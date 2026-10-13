@@ -23,29 +23,53 @@ from .snapshots import create_snapshot_writer
 
 
 settings = auth_settings()
-real_provider = (crossplatform.load_provider(json.loads(Path(os.environ["MUSE_OBSERVED_DATA"]).read_text())) if os.environ.get("MUSE_OBSERVED_DATA")
-                 else RealDataProvider.bundled()) if os.environ.get("MUSE_DATASET") == "observed" else None
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+# Side files the collector writes next to a dataset; never offered as datasets themselves. Matched on name shape,
+# not substrings, so a campaign slug that happens to contain "report" or "cache" is still a dataset.
+NOT_DATASET_SUFFIXES = ("-report", ".report", "-profiles", "-headline", "-ledger", "-cache")
+NOT_DATASET_PREFIXES = ("upriver-",)
+
+
+def looks_like_dataset(path: Path) -> bool:
+    stem = path.stem.lower()
+    return not stem.endswith(NOT_DATASET_SUFFIXES) and not stem.startswith(NOT_DATASET_PREFIXES)
 
 
 def dataset_files() -> dict[str, Path]:
-    """Observed aggregates available locally: the startup dataset, known demo files and saved creator searches."""
+    """Observed aggregates available locally: the startup dataset, built datasets in data/ and saved creator searches, newest first."""
     files: dict[str, Path] = {}
     if os.environ.get("MUSE_OBSERVED_DATA"):
         path = Path(os.environ["MUSE_OBSERVED_DATA"]).resolve()
         files[path.stem] = path
-    for name in ("home-coffee-aggregate.json", "exposure-aggregate.json"):
-        if (DATA_DIR / name).exists():
-            files.setdefault(Path(name).stem, (DATA_DIR / name).resolve())
-    analyses = DATA_DIR / "analyses"
-    if analyses.exists():
-        for path in sorted(analyses.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            if not path.name.endswith(".report.json"):
-                files.setdefault(path.stem, path.resolve())
+    candidates = []
+    for folder in (DATA_DIR, DATA_DIR / "analyses"):
+        if folder.exists():
+            candidates += [p for p in folder.glob("*.json") if looks_like_dataset(p)]
+    for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
+        files.setdefault(path.stem, path.resolve())
     return files
 
 
-active_dataset_id = Path(os.environ["MUSE_OBSERVED_DATA"]).stem if os.environ.get("MUSE_OBSERVED_DATA") and real_provider is not None else None
+def _startup_dataset():
+    """The dataset the server opens with: MUSE_OBSERVED_DATA, else the bundled sample, else the newest local dataset."""
+    if os.environ.get("MUSE_DATASET") != "observed":
+        return None, None
+    if os.environ.get("MUSE_OBSERVED_DATA"):
+        path = Path(os.environ["MUSE_OBSERVED_DATA"]).resolve()
+        return crossplatform.load_provider(json.loads(path.read_text())), path.stem
+    try:
+        return RealDataProvider.bundled(), None
+    except FileNotFoundError:
+        pass
+    for dataset_id, path in dataset_files().items():
+        try:
+            return crossplatform.load_provider(json.loads(path.read_text())), dataset_id
+        except (PlanError, OSError, ValueError):
+            continue
+    raise SystemExit("MUSE_DATASET=observed but no dataset was found. Set MUSE_OBSERVED_DATA to a built aggregate, or run a creator search first.")
+
+
+real_provider, active_dataset_id = _startup_dataset()
 CREATOR_METRIC_LABELS = {
     "views": "Expected video views",
     "price": "Sponsorship fee (USD)",
@@ -92,10 +116,10 @@ class PlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     budget: int = Field(ge=0, le=5_000_000)
-    currentRoster: list[str] = Field(default_factory=list, max_length=50)
-    include: list[str] = Field(default_factory=list, max_length=50)
-    exclude: list[str] = Field(default_factory=list, max_length=50)
-    costs: dict[str, int] = Field(default_factory=dict, max_length=100)
+    currentRoster: list[str] = Field(default_factory=list, max_length=500)
+    include: list[str] = Field(default_factory=list, max_length=500)
+    exclude: list[str] = Field(default_factory=list, max_length=500)
+    costs: dict[str, int] = Field(default_factory=dict, max_length=1000)
     planningContext: PlanningContext = Field(default_factory=PlanningContext)
 
 
@@ -104,10 +128,10 @@ class CampaignInput(BaseModel):
 
     name: str = Field(min_length=1, max_length=80)
     budget: int = Field(ge=0, le=5_000_000)
-    currentRoster: list[str] = Field(default_factory=list, max_length=50)
-    include: list[str] = Field(default_factory=list, max_length=50)
-    exclude: list[str] = Field(default_factory=list, max_length=50)
-    costs: dict[str, int] = Field(default_factory=dict, max_length=100)
+    currentRoster: list[str] = Field(default_factory=list, max_length=500)
+    include: list[str] = Field(default_factory=list, max_length=500)
+    exclude: list[str] = Field(default_factory=list, max_length=500)
+    costs: dict[str, int] = Field(default_factory=dict, max_length=1000)
     planningContext: PlanningContext = Field(default_factory=PlanningContext)
     campaignBrief: dict[str, object] | None = None
     datasetVersion: str | None = None
@@ -291,11 +315,21 @@ class ActivateRequest(BaseModel):
     id: str = Field(min_length=1, max_length=120)
 
 
+class RosterItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    handle: str = Field(min_length=1, max_length=200)
+    topic: str = Field(default='', max_length=60)
+
+
 class DiscoverRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     prompt: str = Field(min_length=3, max_length=300)
     expandWithUpriver: bool = False
     crossPlatform: bool = False
+    # A creator list (YouTube handles, channel ids or URLs) skips the AI search and maps overlap for exactly these channels.
+    roster: list[RosterItem] = Field(default_factory=list, max_length=60)
+    # When the same list was mapped before, load that dataset at once; false forces a fresh collection.
+    reuse: bool = True
 
 
 class ProfileRef(BaseModel):
@@ -335,7 +369,8 @@ def list_datasets(_: AuthenticatedUser = Depends(user_dependency)):
         rows.append({'id': dataset_id, 'name': campaign.get('name') or meta.get('title') or dataset_id,
                      'prompt': meta.get('prompt'), 'dataDate': meta.get('data_date'), 'active': dataset_id == active_dataset_id})
     return {'datasets': rows, 'active': active_dataset_id,
-            'discovery': {'enabled': bool(os.environ.get('YOUTUBE_API_KEYS', '').strip()) and canonical_ai_status()['enabled']}}
+            'discovery': {'enabled': bool(os.environ.get('YOUTUBE_API_KEYS', '').strip()) and canonical_ai_status()['enabled']},
+            'roster': {'enabled': bool(os.environ.get('YOUTUBE_API_KEYS', '').strip())}}
 
 
 @app.post('/api/datasets/activate')
@@ -362,13 +397,15 @@ def restricted_names() -> set[str]:
 
 @app.post('/api/discover')
 def start_discovery(request: DiscoverRequest, _: AuthenticatedUser = Depends(user_dependency)):
-    if not canonical_ai_status()['enabled']:
-        return JSONResponse(status_code=503, content={'error': 'Creator search needs live AI to be configured.'})
+    if not request.roster and not canonical_ai_status()['enabled']:
+        return JSONResponse(status_code=503, content={'error': 'Creator search needs live AI to be configured. You can still upload a creator list.'})
     try:
         if (request.expandWithUpriver or request.crossPlatform) and not upriver.status()['configured']:
             raise PlanError('Add UPRIVER_API_KEY to the server .env to use Upriver lookalikes.')
         job_id = discovery.start(request.prompt, os.environ.get('YOUTUBE_API_KEYS', '').split(','), restricted_names(),
-                                 expand_with_upriver=request.expandWithUpriver, cross_platform=request.crossPlatform)
+                                 expand_with_upriver=request.expandWithUpriver, cross_platform=request.crossPlatform,
+                                 roster=[(r.handle, r.topic) for r in request.roster] or None,
+                                 saved=dataset_files() if request.roster and request.reuse else None)
     except PlanError as exc:
         return JSONResponse(status_code=400, content={'error': str(exc)})
     return {'job': discovery.status(job_id)}

@@ -1,52 +1,61 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Check, ChevronRight, CircleHelp, ExternalLink, Globe, LayoutGrid, Loader2, Map as MapIcon, MessageCircle, Search, Send, Sparkles, Users, X } from 'lucide-react';
-import { Glance } from './Glance';
-import { ExploreOverlap } from './ExploreOverlap';
-import { WhyNotPanel, type WhyNot } from './WhyNotPanel';
+import { BarChart3, Bell, Check, ChevronRight, CircleHelp, Home, Loader2, Map as MapIcon, Send, SlidersHorizontal, Sparkles, Upload, User, Users } from 'lucide-react';
+import { CreatorsScreen, type CreatorsFilter, type RosterStatus } from './CreatorsScreen';
+import { MethodsScreen } from './MethodsScreen';
+import { MusePanel } from './MusePanel';
+import { Avatar, Chip, EyebrowRow, Insight, Mark, PlatformGlyph, StatCard } from './parts';
+import {
+  PLATFORMS, PLATFORM_COMMUNITY, PLATFORM_LABEL, compact, pct, platformOf, topicOf,
+  type Attachment, type Campaign, type ChatMessage, type Creator, type Dataset, type Delta, type Evidence, type Graph, type Inputs, type Job, type Method, type Plan, type Platform, type RosterDiag, type RosterItem, type SavedCampaign,
+} from './types';
 import whiteWordmark from '../brandmuse/assets/brand-muse-wordmark-white.jpg';
+import './studio.css';
 
-type Creator = { audienceDescription?: string; platform?: 'youtube' | 'instagram' | 'tiktok'; url?: string | null; followers?: number; audienceSummary?: string; hasAudienceData?: boolean; overlapEvidence?: string; source?: 'synthetic' | 'observed-public'; id: string; name: string; category: string; estimatedViews: number; baseCost: number; eligibilityStatus: string;
-  sponsorMentions?: { brands: { brand: string }[] } | null; creatorCountry?: string | null; foundBy?: 'upriver' | 'youtube_search' };
-type Lookalike = { creatorId?: string; name: string; platform: string; handle?: string; url?: string; followers?: number | null; followerBucket?: string | null; score: number | null; otherChannels: { platform: string; handle?: string }[] };
-type LookalikeGroup = { anchorId: string; anchorName: string; results: Lookalike[]; incomplete: boolean; cached: boolean };
-type MatchProfile = { url: string; name: string; source: 'lookalike' | 'plan'; platform: string; summary: string; hasData: boolean };
-type MatchPair = { a: string; b: string; match: number; parts: Record<string, number>; basis: string[]; complete: boolean };
-type AudienceMatch = { profiles: MatchProfile[]; pairs: MatchPair[]; creditsCharged: number; stopped: string | null; note: string };
+type Screen = 'overview' | 'creators' | 'methods';
+type Route = { screen: Screen; anchor: string };
 type UpriverStatus = { configured: boolean; creditsReservedThisSession: number; creditCap: number; creditsRemaining: number };
-type Campaign = { id: string; name: string; category: string; audience: string };
-type RosterDiag = { ids: string[]; spend: number; coverage: number; standalone: number; shared: number; sharedRate: number };
-type Plan = {
-  campaign: Campaign; budget: number; remainingBudget: number;
-  recommended: { ids: string[] }; current: { ids: string[] };
-  steps: { creatorId: string; creatorName: string; marginalProxyReach: number; cost: number }[];
-  whyNot?: WhyNot[];
-  countNote?: string | null;
-  rosterDiagnostics?: { rosters: { current: RosterDiag; recommended: RosterDiag; viewsBaseline: RosterDiag } };
+
+const EMPTY = { brandDescription: '', relevance: {}, maxPerGroup: {}, creatorCount: 0 };
+const DEFAULT_CREATORS = 10;
+// The planner is an audience-overlap tool here, not a media buyer: the budget is kept unbounded and never shown.
+const UNBOUNDED_BUDGET = 5_000_000;
+const NAV: { label: string; icon: typeof Home; screen: Screen; anchor?: string }[] = [
+  { label: 'Overview', icon: Home, screen: 'overview' },
+  { label: 'Creators', icon: Users, screen: 'creators' },
+  { label: 'Audience map', icon: MapIcon, screen: 'creators', anchor: 'map' },
+  { label: 'Why not', icon: CircleHelp, screen: 'creators', anchor: 'whynot' },
+  { label: 'Methods', icon: BarChart3, screen: 'methods' },
+];
+// Where the assistant's section names land in the new layout.
+const SECTION_TARGET: Record<string, { screen: Screen; anchor?: string; label: string }> = {
+  discover: { screen: 'overview', label: 'Overview' },
+  overview: { screen: 'overview', label: 'Overview' },
+  creators: { screen: 'creators', label: 'Creators' },
+  map: { screen: 'creators', anchor: 'map', label: 'Audience map' },
+  platforms: { screen: 'creators', label: 'Creators' },
+  whynot: { screen: 'creators', anchor: 'whynot', label: 'Why not' },
+  method: { screen: 'methods', label: 'Methods' },
 };
-type Context = { brandDescription: string; relevance: Record<string, number>; maxPerGroup: Record<string, number>; creatorCount?: number };
-type Inputs = { budget: number; currentRoster: string[]; include: string[]; exclude: string[]; costs: Record<string, number>; planningContext: Context };
-type SavedCampaign = Inputs & { id: string; name: string; datasetVersion: string };
-type Dataset = { id: string; name: string; prompt?: string | null; dataDate?: string | null; active: boolean };
-type Job = { id: string; status: 'running' | 'done' | 'error'; step: string; progress: number; message: string; dataset_id: string | null; error: string | null; units: number };
-type Evidence = { medianSampledCommenters: number; eligibleCreators: number; thinCreators: number; strength: 'strong' | 'moderate' | 'thin' };
-type Delta = { subject: 'plan' | 'roster'; overlapFrom: number; overlapTo: number; reachFrom: number; reachTo: number; spendFrom: number; spendTo: number; added: string[]; removed: string[]; previous: Inputs };
-type ChatMessage = { role: 'user' | 'assistant'; text: string; change?: { changed: boolean; text: string }; section?: string | null; discoverPrompt?: string | null; error?: boolean };
+const STEPS = [['plan', 'Understanding brief'], ['search', 'Finding channels'], ['videos', 'Reading videos'], ['comments', 'Sampling comments'], ['build', 'Mapping overlap']] as const;
 
-const EMPTY: Context = { brandDescription: '', relevance: {}, maxPerGroup: {}, creatorCount: 0 };
-const SECTIONS = [
-  { id: 'discover', label: 'New search', icon: Search },
-  { id: 'overview', label: 'Overview', icon: LayoutGrid },
-  { id: 'creators', label: 'Creators', icon: Users },
-  { id: 'map', label: 'Audience map', icon: MapIcon },
-  { id: 'platforms', label: 'Beyond YouTube', icon: Globe },
-  { id: 'whynot', label: 'Why not', icon: CircleHelp },
-  { id: 'method', label: 'How estimates work', icon: BarChart3 },
-] as const;
-const STEPS = [['plan', 'Understanding brief'], ['search', 'Searching YouTube'], ['videos', 'Reading videos'], ['comments', 'Sampling comments'], ['build', 'Mapping overlap']] as const;
-const SUGGESTIONS = ['More latte art', 'Less overlap', 'Make it cheaper', 'Where do I see why a creator was left out?'];
+/** A creator list from a CSV or text file: one YouTube handle, channel id or URL per line, optional topic in a second column. */
+export function parseRoster(text: string): RosterItem[] {
+  const rows: RosterItem[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;  // blank or comment line
+    const cells = line.split(/[,\t;]/).map((c) => c.trim().replace(/^"|"$/g, ''));
+    const handle = cells[0].slice(0, 200);
+    if (!handle || /^(handle|channel|creator|url|link|name|youtube|platform|profile)s?$/i.test(handle)) continue;  // header row
+    rows.push({ handle, topic: (cells[1] ?? '').slice(0, 60) });
+  }
+  return rows;
+}
 
-const money = (v: number) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-const compact = (v: number) => new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(Math.round(v));
+function readRoute(): Route {
+  const [screen, anchor = ''] = window.location.hash.replace(/^#\/?/, '').split('/');
+  return { screen: screen === 'creators' || screen === 'methods' ? screen : 'overview', anchor };
+}
 
 // The dataset this page is showing; sent with every request so the server can say when another tab switched it.
 let pageDataset = '';
@@ -62,20 +71,26 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export function Studio() {
+  const [route, setRoute] = useState<Route>(readRoute);
   const [saved, setSaved] = useState<SavedCampaign[]>([]);
   const [saveName, setSaveName] = useState('Demo campaign');
   const [saveStatus, setSaveStatus] = useState('');
   const [saving, setSaving] = useState(false);
   const [datasetVersion, setDatasetVersion] = useState('');
-  const [datasetLabel, setDatasetLabel] = useState('');
   const [creators, setCreators] = useState<Creator[]>([]);
-  const [campaign, setCampaign] = useState<Campaign | null>(null);
-  const [inputs, setInputs] = useState<Inputs>({ budget: 10000, currentRoster: [], include: [], exclude: [], costs: {}, planningContext: EMPTY });
+  const [inputs, setInputs] = useState<Inputs>({ budget: UNBOUNDED_BUDGET, currentRoster: [], include: [], exclude: [], costs: {}, planningContext: EMPTY });
+  const [rosterList, setRosterList] = useState(false);
+  const [rosterMissing, setRosterMissing] = useState<string[]>([]);
+  const [rosterSkipped, setRosterSkipped] = useState<{ channel: string; reason: string }[]>([]);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [plannedKey, setPlannedKey] = useState('');
   const [delta, setDelta] = useState<Delta | null>(null);
   const [evidence, setEvidence] = useState<Evidence | null>(null);
   const [rosterBasis, setRosterBasis] = useState('');
+  const [method, setMethod] = useState<Method | null>(null);
+  const [datasetKind, setDatasetKind] = useState('');
+  const [graph, setGraph] = useState<Graph | null>(null);
+  const [graphError, setGraphError] = useState('');
   const planRef = useRef<Plan | null>(null);
   const plannedInputsRef = useRef<Inputs | null>(null);
   const requestId = useRef(0);
@@ -85,90 +100,114 @@ export function Studio() {
   const [aiEnabled, setAiEnabled] = useState(false);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [discoveryEnabled, setDiscoveryEnabled] = useState(false);
+  const [rosterEnabled, setRosterEnabled] = useState(false);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [prompt, setPrompt] = useState('');
   const [upriverStatus, setUpriverStatus] = useState<UpriverStatus | null>(null);
-  const [useUpriver, setUseUpriver] = useState(false);
-  const [crossPlatform, setCrossPlatform] = useState(false);
-  const [platformFilter, setPlatformFilter] = useState<'all' | 'youtube' | 'instagram' | 'tiktok'>('all');
-  const [method, setMethod] = useState<{ kappa: number; calibrationPairs: number; defaultKappa: number; unknownMatch: number; weights: Record<string, number>; quotePer1k: Record<string, number> } | null>(null);
-  const [datasetKind, setDatasetKind] = useState('');
-  const [lookalikes, setLookalikes] = useState<LookalikeGroup[]>([]);
-  const [lookalikeBusy, setLookalikeBusy] = useState(false);
-  const [lookalikeNote, setLookalikeNote] = useState('');
-  const [picked, setPicked] = useState<Record<string, { url: string; name: string }>>({});
-  const [matchResult, setMatchResult] = useState<AudienceMatch | null>(null);
-  const [matchBusy, setMatchBusy] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: 'assistant', text: 'Hi, I’m Muse. Ask me to change the plan ("less overlap", "drop a creator", "spend less"), explain a choice, or find where something is on the page.' }]);
   const [draft, setDraft] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
-  const [chatOpen, setChatOpen] = useState(true);
-  const [activeSection, setActiveSection] = useState('discover');
-  const [flash, setFlash] = useState('');
-  const [filter, setFilter] = useState<'all' | 'recommended' | 'roster' | 'left'>('recommended');
-  const [query, setQuery] = useState('');
-  const [openRow, setOpenRow] = useState('');
+  const [chatOpen, setChatOpen] = useState(false);
   const inputsRef = useRef(inputs);
   inputsRef.current = inputs;
-  const chatEnd = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<HTMLInputElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   const key = (i: Inputs) => JSON.stringify(i);
+  // The server fills in default quotes itself and caps the costs map, so only send the quotes you changed.
+  const outbound = (i: Inputs): Inputs => ({ ...i, costs: Object.fromEntries(Object.entries(i.costs).filter(([id, v]) => byId.get(id) && v !== byId.get(id)!.baseCost)) });
   const stale = Boolean(plan && plannedKey !== key(inputs));
   const names = useMemo(() => Object.fromEntries(creators.map((c) => [c.id, c.name])), [creators]);
+  const byId = useMemo(() => new Map(creators.map((c) => [c.id, c])), [creators]);
+  const eligible = useMemo(() => creators.filter((c) => c.eligibilityStatus !== 'ineligible'), [creators]);
+  const crossPlatform = datasetKind === 'crossplatform';
+  const observed = creators.some((c) => c.source === 'observed-public');
+  const platformsPresent = PLATFORMS.filter((p) => eligible.some((c) => platformOf(c) === p));
 
   useEffect(() => {
     void api<{ enabled: boolean }>('/api/ai/status').then((s) => setAiEnabled(s.enabled)).catch(() => setAiEnabled(false));
     void refreshDatasets();
     void loadDataset();
     void api<UpriverStatus>('/api/upriver/status').then(setUpriverStatus).catch(() => setUpriverStatus(null));
+    const onHash = () => setRoute(readRoute());
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); navigate('overview'); window.setTimeout(() => promptRef.current?.focus(), 50); }
+      if (e.key === 'Escape') setSettingsOpen(false);
+    };
+    window.addEventListener('hashchange', onHash);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('hashchange', onHash); window.removeEventListener('keydown', onKey); };
   }, []);
-  useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages, chatBusy]);
+
+  // Route changes scroll to the anchor (Audience map, Why not) or back to the top of the screen.
   useEffect(() => {
-    const observer = new IntersectionObserver((entries) => {
-      const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-      if (visible) setActiveSection(visible.target.id);
-    }, { rootMargin: '-20% 0px -60% 0px' });
-    SECTIONS.forEach((s) => { const el = document.getElementById(s.id); if (el) observer.observe(el); });
-    return () => observer.disconnect();
-  }, [plan]);
+    if (!route.anchor) { window.scrollTo({ top: 0 }); return; }
+    const timer = window.setTimeout(() => document.getElementById(route.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+    return () => window.clearTimeout(timer);
+  }, [route]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onClick = (e: MouseEvent) => { if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) setSettingsOpen(false); };
+    window.addEventListener('mousedown', onClick);
+    return () => window.removeEventListener('mousedown', onClick);
+  }, [settingsOpen]);
+
+  // The overlap graph feeds the audience map and the per-creator overlap on the roster cards.
+  useEffect(() => {
+    if (!datasetVersion || !observed) { setGraph(null); return; }
+    const controller = new AbortController();
+    setGraphError('');
+    fetch('/api/overlap', { signal: controller.signal, headers: { 'X-Dataset-Version': datasetVersion } })
+      .then(async (r) => { if (r.ok) setGraph(await r.json()); else setGraphError('Audience data could not be loaded for this dataset.'); })
+      .catch(() => { if (!controller.signal.aborted) setGraphError('Audience data could not be loaded.'); });
+    return () => controller.abort();
+  }, [datasetVersion, observed]);
+
+  function navigate(screen: Screen, anchor = '') {
+    const hash = `#/${screen}${anchor ? `/${anchor}` : ''}`;
+    if (window.location.hash === hash) setRoute({ screen, anchor }); else window.location.hash = hash;
+  }
 
   async function refreshDatasets() {
     try {
-      const payload = await api<{ datasets: Dataset[]; discovery: { enabled: boolean } }>('/api/datasets');
+      const payload = await api<{ datasets: Dataset[]; discovery: { enabled: boolean }; roster?: { enabled: boolean } }>('/api/datasets');
       setDatasets(payload.datasets);
       setDiscoveryEnabled(payload.discovery.enabled);
+      setRosterEnabled(Boolean(payload.roster?.enabled));
     } catch { /* datasets are optional in synthetic mode */ }
   }
 
   async function loadDataset() {
     setError('');
     try {
-      const payload = await api<{ campaign: Campaign; creators: Creator[]; datasetVersion: string; datasetLabel?: string; defaultBudget?: number; defaultCurrentRoster?: string[]; evidence?: Evidence; defaultRosterBasis?: string }>('/api/creators');
+      const payload = await api<{ campaign: Campaign; creators: Creator[]; datasetVersion: string; datasetKind?: string; method?: Method; defaultCurrentRoster?: string[]; evidence?: Evidence; defaultRosterBasis?: string; rosterList?: boolean; rosterMissing?: string[]; rosterSkipped?: { channel: string; reason: string }[] }>('/api/creators');
       pageDataset = payload.datasetVersion;
       setDatasetVersion(payload.datasetVersion);
-      setDatasetLabel(payload.datasetLabel ?? 'Sampled commenter evidence; not validated unique viewers.');
       setSaveName(`${payload.campaign.name} plan`.slice(0, 80));
       setSaveStatus('');
-      void api<{ campaigns: SavedCampaign[] }>('/api/campaigns').then(p => setSaved(p.campaigns)).catch(() => setSaveStatus('Saved campaigns unavailable.'));
+      void api<{ campaigns: SavedCampaign[] }>('/api/campaigns').then((p) => setSaved(p.campaigns)).catch(() => setSaveStatus('Saved campaigns unavailable.'));
       setEvidence(payload.evidence ?? null);
-      setDatasetKind((payload as { datasetKind?: string }).datasetKind ?? '');
-      setMethod((payload as { method?: typeof method }).method ?? null);
-      setPlatformFilter('all');
-      setRosterBasis(payload.defaultRosterBasis ?? '');
+      setDatasetKind(payload.datasetKind ?? '');
+      setMethod(payload.method ?? null);
+      setRosterBasis((payload.defaultRosterBasis ?? '').replace(/ that fit the budget/g, ''));
+      setRosterList(Boolean(payload.rosterList));
+      setRosterMissing(payload.rosterMissing ?? []);
+      setRosterSkipped(payload.rosterSkipped ?? []);
       setDelta(null);
       planRef.current = null;
       plannedInputsRef.current = null;
       skipAuto.current = true;
       setCreators(payload.creators);
-      setCampaign(payload.campaign);
-      const next: Inputs = { budget: payload.defaultBudget ?? (payload.creators.every(c => c.source === 'synthetic') ? 139000 : 10000), currentRoster: payload.defaultCurrentRoster ?? [], include: [], exclude: [],
-        costs: Object.fromEntries(payload.creators.map((c) => [c.id, c.baseCost])), planningContext: EMPTY };
+      // Default recommendation size is ten creators, or the whole pool when it is smaller.
+      // A target the size of the whole pool would just hand the list back, so small pools get no target and the planner picks on gain.
+      const poolSize = payload.creators.filter((c) => c.eligibilityStatus !== 'ineligible').length;
+      const count = poolSize > DEFAULT_CREATORS ? DEFAULT_CREATORS : 0;
+      const next: Inputs = { budget: UNBOUNDED_BUDGET, currentRoster: payload.defaultCurrentRoster ?? [], include: [], exclude: [],
+        costs: Object.fromEntries(payload.creators.map((c) => [c.id, c.baseCost])), planningContext: { ...EMPTY, creatorCount: count } };
       setInputs(next);
-      setOpenRow('');
-      setLookalikes([]);
-      setLookalikeNote('');
-      setPicked({});
-      setMatchResult(null);
       await runPlan(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load creators.');
@@ -178,28 +217,27 @@ export function Studio() {
   async function saveCurrentCampaign() {
     setSaving(true);
     try {
-      await api('/api/campaigns', { name: saveName.trim(), ...inputsRef.current });
+      await api('/api/campaigns', { name: saveName.trim(), ...outbound(inputsRef.current) });
       const result = await api<{ campaigns: SavedCampaign[] }>('/api/campaigns');
       setSaved(result.campaigns);
-      setSaveStatus('Campaign saved.');
+      setSaveStatus('Saved.');
     } catch (e) {
       if (e instanceof DatasetChanged) { setSaveStatus('Not saved: ' + e.message); void reloadActive(e.message); return; }
       setSaveStatus(e instanceof Error ? e.message : 'Save failed.');
-    }
-    finally { setSaving(false); }
+    } finally { setSaving(false); }
   }
 
   async function restoreCampaign(id: string) {
-    const row = saved.find(c => c.id === id && c.datasetVersion === datasetVersion);
+    const row = saved.find((c) => c.id === id && c.datasetVersion === datasetVersion);
     if (!row) return;
-    const next: Inputs = { budget: row.budget, currentRoster: row.currentRoster, include: row.include,
-      exclude: row.exclude, costs: row.costs, planningContext: row.planningContext ?? EMPTY };
+    const next: Inputs = { budget: UNBOUNDED_BUDGET, currentRoster: row.currentRoster, include: row.include, exclude: row.exclude, costs: row.costs, planningContext: row.planningContext ?? EMPTY };
     ++requestId.current;
     skipAuto.current = true;
     inputsRef.current = next;
     setInputs(next);
     setSaveName(row.name);
-    setSaveStatus('Campaign loaded.');
+    setSaveStatus('Loaded.');
+    setSettingsOpen(false);
     await runPlan(next);
   }
 
@@ -210,9 +248,8 @@ export function Studio() {
     const subject = rosterOnly ? 'roster' : 'plan';
     const pick = (p: Plan) => (subject === 'roster' ? p.rosterDiagnostics!.rosters.current : p.rosterDiagnostics!.rosters.recommended);
     const b = pick(before), a = pick(after);
-    const added = a.ids.filter((id) => !b.ids.includes(id));
-    const removed = b.ids.filter((id) => !a.ids.includes(id));
-    setDelta({ subject, overlapFrom: b.sharedRate, overlapTo: a.sharedRate, reachFrom: b.coverage, reachTo: a.coverage, spendFrom: b.spend, spendTo: a.spend, added, removed, previous: beforeInputs });
+    setDelta({ subject, overlapFrom: b.sharedRate, overlapTo: a.sharedRate, reachFrom: b.coverage, reachTo: a.coverage,
+      added: a.ids.filter((id) => !b.ids.includes(id)), removed: b.ids.filter((id) => !a.ids.includes(id)), previous: beforeInputs });
   }
 
   function applyPlan(next: Inputs, result: Plan) {
@@ -228,7 +265,7 @@ export function Studio() {
     setLoading(true);
     setError('');
     try {
-      const result = await api<Plan>('/api/plan', next);
+      const result = await api<Plan>('/api/plan', outbound(next));
       if (id !== requestId.current) return;
       applyPlan(next, result);
     } catch (e) {
@@ -240,7 +277,7 @@ export function Studio() {
     }
   }
 
-  // Every edit re-plans automatically after a short pause, so metrics react to each change.
+  // Every edit re-plans automatically after a short pause, so the numbers react to each change.
   useEffect(() => {
     if (creators.length === 0) return;
     if (skipAuto.current) { skipAuto.current = false; return; }
@@ -253,10 +290,38 @@ export function Studio() {
     setInputs((current) => ({ ...current, ...patch }));
   }
 
-  function goTo(section: string) {
-    document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setFlash(section);
-    window.setTimeout(() => setFlash(''), 1600);
+  // Platform choice: a platform is "off" when its planner cap is zero. Off platforms also leave your roster and requirements,
+  // so the baseline you compare against respects the same choice.
+  const platformOn = (p: Platform) => inputs.planningContext.maxPerGroup[PLATFORM_COMMUNITY[p]] !== 0;
+  const parked = useRef<Partial<Record<Platform, { roster: string[]; include: string[] }>>>({});
+  function togglePlatform(p: Platform) {
+    const on = platformOn(p);
+    if (on && platformsPresent.filter((q) => q !== p).every((q) => !platformOn(q))) return;  // keep at least one platform
+    setInputs((current) => {
+      const caps = { ...current.planningContext.maxPerGroup };
+      const mine = (id: string) => platformOf(byId.get(id) ?? {}) === p;
+      let { currentRoster, include } = current;
+      if (on) {
+        caps[PLATFORM_COMMUNITY[p]] = 0;
+        parked.current[p] = { roster: currentRoster.filter(mine), include: include.filter(mine) };
+        currentRoster = currentRoster.filter((id) => !mine(id));
+        include = include.filter((id) => !mine(id));
+      } else {
+        delete caps[PLATFORM_COMMUNITY[p]];
+        const back = parked.current[p];
+        if (back) {
+          currentRoster = [...currentRoster, ...back.roster.filter((id) => !currentRoster.includes(id))];
+          include = [...include, ...back.include.filter((id) => !include.includes(id))];
+          delete parked.current[p];
+        }
+      }
+      return { ...current, planningContext: { ...current.planningContext, maxPerGroup: caps }, currentRoster, include };
+    });
+  }
+
+  function goToSection(section: string) {
+    const target = SECTION_TARGET[section];
+    if (target) navigate(target.screen, target.anchor);
   }
 
   // Another tab or a finished search switched the server's active dataset: follow it instead of showing an ID error.
@@ -273,82 +338,99 @@ export function Studio() {
       await api('/api/datasets/activate', { id });
       await refreshDatasets();
       await loadDataset();
-      goTo('overview');
+      navigate('overview');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not switch datasets.');
     }
   }
 
-  async function discover(text = prompt) {
+  // A prompt searches YouTube; a prompt with a roster maps overlap for exactly the listed channels and reports back in Muse.
+  async function discover(text = prompt, roster?: RosterItem[], reuse = true) {
     if (!text.trim()) return;
-    setPrompt(text);
+    if (!roster) setPrompt(text);
     setError('');
-    goTo('discover');
+    navigate('overview');
     try {
-      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: useUpriver && Boolean(upriverStatus?.configured),
-        crossPlatform: crossPlatform && Boolean(upriverStatus?.configured) });
+      const started = await api<{ job: Job }>('/api/discover', { prompt: text.trim(), expandWithUpriver: false, crossPlatform: Boolean(upriverStatus?.configured),
+        ...(roster ? { roster, reuse } : {}) });
+      if (started.job.status === 'done' && started.job.dataset_id) {
+        // The same list was mapped before: the server handed back the finished dataset.
+        await activate(started.job.dataset_id);
+        setMessages((m) => [...m, { role: 'assistant', text: `${started.job.message}. Say "rebuild" with the list attached if you want it collected again. ${aiEnabled ? 'Tell me how to change the recommendation: how many creators, someone to require or drop, less overlap.' : ''}`.trim(), section: 'overview' }]);
+        return;
+      }
       setJob(started.job);
+      if (roster) setChatBusy(true);
       let failures = 0;
       const poll = async () => {
         let current: { job: Job };
         try {
           current = await api<{ job: Job }>(`/api/discover/${started.job.id}`);
           failures = 0;
-        } catch (e) {
+        } catch {
           failures += 1;
           if (failures < 5) { window.setTimeout(() => void poll(), 3000); return; }
-          setJob((j) => (j ? { ...j, status: 'error', error: 'Lost contact with the server during the search. Refresh and check Your searches.' } : j));
+          setJob((j) => (j ? { ...j, status: 'error', error: 'Lost contact with the server during the search. Refresh to check your searches.' } : j));
+          setChatBusy(false);
           return;
         }
         setJob(current.job);
         if (current.job.status === 'running') { window.setTimeout(() => void poll(), 1500); return; }
+        setChatBusy(false);
+        if (current.job.status === 'error') {
+          if (roster) setMessages((m) => [...m, { role: 'assistant', text: current.job.error ?? 'Mapping your list failed.', error: true }]);
+          return;
+        }
         if (current.job.status === 'done' && current.job.dataset_id) {
           await activate(current.job.dataset_id);
-          setMessages((m) => [...m, { role: 'assistant', text: `${current.job.message}. The plan below is for “${text.trim()}”.`, section: 'overview' }]);
+          setMessages((m) => [...m, roster
+            ? { role: 'assistant', text: `${current.job.message}. The recommendation from your list is on the Overview; the Creators tab shows Recommended next to Your creators. ${aiEnabled ? 'Tell me how to change it: how many creators, someone to require or drop, less overlap.' : 'Use the sliders in the prompt field to set how many creators to recommend.'}`, section: 'overview' }
+            : { role: 'assistant', text: `${current.job.message}. The plan is now for “${text.trim()}”.`, section: 'overview' }]);
         }
       };
       window.setTimeout(() => void poll(), 1200);
     } catch (e) {
       setJob(null);
-      setError(e instanceof Error ? e.message : 'Creator search failed.');
+      setChatBusy(false);
+      if (roster) setMessages((m) => [...m, { role: 'assistant', text: e instanceof Error ? e.message : 'Mapping your list failed.', error: true }]);
+      else setError(e instanceof Error ? e.message : 'Creator search failed.');
     }
   }
 
-  async function findLookalikes() {
-    if (!plan) return;
-    setLookalikeBusy(true);
-    setLookalikeNote('');
-    try {
-      const payload = await api<{ groups: LookalikeGroup[]; creditsCharged: number; status: UpriverStatus; note: string }>(
-        '/api/upriver/similar', { creatorIds: plan.recommended.ids.slice(0, 3), platforms: ['instagram', 'tiktok'] });
-      setLookalikes(payload.groups);
-      setUpriverStatus(payload.status);
-      setLookalikeNote(`${payload.creditsCharged ? `Used about ${payload.creditsCharged} Upriver credits.` : 'Used saved results, no credits.'} ${payload.note}`);
-    } catch (e) {
-      setLookalikeNote(e instanceof Error ? e.message : 'Upriver lookup failed.');
-    } finally {
-      setLookalikeBusy(false);
+  async function attachRoster(file: File) {
+    const roster = parseRoster(await file.text());
+    if (roster.length < 2) {
+      setMessages((m) => [...m, { role: 'assistant', text: `${file.name} has fewer than two creators I can read. Use one YouTube handle, channel id or URL per line, with an optional topic in a second column.`, error: true }]);
+      return;
     }
+    if (roster.length > 60) {
+      setMessages((m) => [...m, { role: 'assistant', text: `${file.name} has ${roster.length} creators; a list can hold 60, so only the first 60 are attached.`, error: true }]);
+    }
+    setAttachment({ name: file.name, roster: roster.slice(0, 60) });
+    setChatOpen(true);
   }
 
-  async function compareAudiences() {
-    if (!plan) return;
-    setMatchBusy(true);
-    try {
-      const payload = await api<AudienceMatch & { status: UpriverStatus }>('/api/upriver/audience-match', {
-        profiles: Object.values(picked).slice(0, 8), planCreatorIds: plan.recommended.ids.slice(0, 3) });
-      setMatchResult(payload);
-      setUpriverStatus(payload.status);
-    } catch (e) {
-      setLookalikeNote(e instanceof Error ? e.message : 'Audience comparison failed.');
-    } finally {
-      setMatchBusy(false);
+  // Only what is typed in the Muse composer (no argument) can carry the attached list; chips and "Ask Muse why" never start a run.
+  async function send(text?: string) {
+    const fromComposer = text === undefined;
+    const message = (text ?? draft).trim();
+    if (chatBusy) return;
+    if (attachment && fromComposer) {
+      // The attached list is the brief: Muse maps overlap for those channels, then the conversation continues on the result.
+      const ask = message || `Map audience overlap for the creators in ${attachment.name}`;
+      const name = attachment.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim();
+      const brief = (message.length >= 3 ? message : name.length >= 3 ? name : 'Creator list').slice(0, 300);
+      setChatOpen(true);
+      setDraft('');
+      setMessages((m) => [...m, { role: 'user', text: ask, attachment: `${attachment.name} · ${attachment.roster.length} creators` },
+        { role: 'assistant', text: `Reading ${attachment.roster.length} creators from your list. If I have mapped this exact list before, it loads straight away; otherwise I look up each channel, sample who comments on their recent videos and map where those audiences overlap, which takes a few minutes with progress on the Overview.`, section: 'overview' }]);
+      const roster = attachment.roster;
+      setAttachment(null);
+      await discover(brief, roster, !/\b(rebuild|re-?run|refresh|fresh|again|re-?collect)\b/i.test(message));
+      return;
     }
-  }
-
-  async function send(text = draft) {
-    const message = text.trim();
-    if (!message || chatBusy) return;
+    if (!message) return;
+    setChatOpen(true);
     setDraft('');
     const history = messages.slice(-6).map((m) => ({ role: m.role, text: m.text }));
     setMessages((m) => [...m, { role: 'user', text: message }]);
@@ -356,9 +438,9 @@ export function Studio() {
     const sent = inputsRef.current;
     try {
       const reply = await api<{ intent: string; reply: string; section: string | null; discoverPrompt?: string | null; inputs?: Inputs; plan?: Plan; change?: { changed: boolean; text: string } }>(
-        '/api/assistant', { message, inputs: sent, history });
+        '/api/assistant', { message, inputs: outbound(sent), history });
       if (reply.inputs && reply.plan && key(inputsRef.current) !== key(sent)) {
-        setMessages((m) => [...m, { role: 'assistant', text: 'You changed the plan while I was working, so I didn\u2019t apply my change over yours. Ask again and I\u2019ll start from your latest settings.', error: true }]);
+        setMessages((m) => [...m, { role: 'assistant', text: 'You changed the plan while I was working, so I didn’t apply my change over yours. Ask again and I’ll start from your latest settings.', error: true }]);
         return;
       }
       if (reply.inputs && reply.plan) {
@@ -366,9 +448,9 @@ export function Studio() {
         setInputs(reply.inputs);
       }
       setMessages((m) => [...m, { role: 'assistant', text: reply.reply, change: reply.change, section: reply.section, discoverPrompt: reply.discoverPrompt }]);
-      if (reply.section && reply.intent !== 'discover') goTo(reply.section);
+      if (reply.section && reply.intent !== 'discover') goToSection(reply.section);
     } catch (e) {
-      if (e instanceof DatasetChanged) { void reloadActive(e.message + ' Ask again and I\u2019ll use this search.'); return; }
+      if (e instanceof DatasetChanged) { void reloadActive(e.message + ' Ask again and I’ll use this search.'); return; }
       setMessages((m) => [...m, { role: 'assistant', text: e instanceof Error ? e.message : 'Something went wrong.', error: true }]);
     } finally {
       setChatBusy(false);
@@ -376,406 +458,284 @@ export function Studio() {
   }
 
   const planIds = plan ? new Set(plan.recommended.ids) : null;
-  const leftOut = new Map((plan?.whyNot ?? []).map((w) => [w.creatorId, w]));
-  const statusOf = (id: string) => inputs.exclude.includes(id) ? 'excluded' : inputs.include.includes(id) ? 'required' : !planIds ? 'none' : planIds.has(id) ? 'recommended' : 'left';
-  const rows = creators
-    .filter((c) => c.eligibilityStatus !== 'ineligible')
-    .filter((c) => !query.trim() || c.name.toLowerCase().includes(query.trim().toLowerCase()))
-    .filter((c) => platformFilter === 'all' || c.platform === platformFilter)
-    .filter((c) => filter === 'all'
-      || (filter === 'recommended' && ((planIds?.has(c.id) ?? false) || inputs.exclude.includes(c.id) || inputs.include.includes(c.id) || openRow === c.id))
-      || (filter === 'roster' && inputs.currentRoster.includes(c.id))
-      || (filter === 'left' && statusOf(c.id) === 'left'))
-    .sort((a, b) => Number(!(planIds?.has(a.id))) - Number(!(planIds?.has(b.id))) || b.estimatedViews - a.estimatedViews);
-  const eligible = creators.filter((c) => c.eligibilityStatus !== 'ineligible');
-  const activeDataset = datasets.find((d) => d.active);
-  const recDiag = plan?.rosterDiagnostics?.rosters.recommended;
+  const statusOf = (id: string): RosterStatus => inputs.exclude.includes(id) ? 'excluded' : inputs.include.includes(id) ? 'required' : !planIds ? 'none' : planIds.has(id) ? 'recommended' : 'left';
+  const rec = plan?.rosterDiagnostics?.rosters.recommended;
+  const cur = plan?.rosterDiagnostics?.rosters.current;
   const stepIndex = job ? STEPS.findIndex(([id]) => id === job.step) : -1;
+  const savedHere = saved.filter((c) => c.datasetVersion === datasetVersion);
+  const otherSearches = datasets.filter((d) => !d.active).slice(0, 3);
+  const platformsOn = platformsPresent.filter(platformOn);
+  const platformsOff = platformsPresent.filter((p) => !platformOn(p));
+  const firstLeftOut = plan?.whyNot?.[0]?.creatorName;
+  const suggestions = ['Less overlap', 'Recommend 6 creators', firstLeftOut ? `Why was ${firstLeftOut} left out?` : 'Where do I see why a creator was left out?'];
+
+  // Share of a plan creator's audience that another plan creator also reaches, from the overlap graph, and who that is.
+  function overlapFor(id: string): { share: number; source: string; with: string } | null {
+    if (!graph || !planIds) return null;
+    const me = graph.nodes.find((n) => n.id === id);
+    if (!me || !me.sampledCommenters) return null;
+    let best: { share: number; source: string; with: string } | null = null;
+    for (const p of graph.pairs) {
+      if ((p.a !== id && p.b !== id) || p.sharedCommenters <= 0) continue;
+      const other = p.a === id ? p.b : p.a;
+      if (!planIds.has(other)) continue;
+      const share = p.sharedCommenters / me.sampledCommenters;
+      if (!best || share > best.share) best = { share, source: p.source ?? 'measured', with: names[other] ?? other };
+    }
+    return best;
+  }
+
+  const sourcing = !crossPlatform && !upriverStatus?.configured
+    ? 'Pulls creators from YouTube; add UPRIVER_API_KEY on the server for TikTok and Instagram.'
+    : platformsOff.length === 0 || platformsPresent.length <= 1
+      ? 'Pulls creators from YouTube, TikTok and Instagram automatically. Overlap is measured where comments are public and estimated everywhere else.'
+      : `Planning across ${listOf(platformsOn.map((p) => PLATFORM_LABEL[p]))} only; ${listOf(platformsOff.map((p) => PLATFORM_LABEL[p]))} ${platformsOff.length > 1 ? 'are' : 'is'} switched off.`;
+  const caveat = evidence && evidence.strength !== 'strong'
+    ? `${evidence.strength === 'thin' ? 'Thin evidence' : 'Limited evidence'}: a typical creator here has about ${evidence.medianSampledCommenters.toLocaleString('en-US')} sampled commenters, so small overlap differences are rough. Channels with comments turned off can’t be measured.`
+    : plan?.countNote && !stale ? plan.countNote : '';
+  const insight = plan && rec
+    ? `${rec.ids.length} of ${eligible.length} creators, ${pct(rec.sharedRate)} ${crossPlatform ? 'estimated ' : ''}overlap, ${compact(plan.recommended.proxyReach)} unique ${crossPlatform ? 'followers' : 'commenters'}.${plan.choice?.headline ? ` ${plan.choice.headline}` : ''}${plan.steps[0]?.reason ? ` ${plan.steps[0].reason}` : plan.steps[0] ? ` Next move: check whether ${plan.steps[0].creatorName} should be required or swapped.` : ''}`
+    : '';
+  const creatorsFilter: CreatorsFilter | undefined = route.anchor === 'yours' ? 'yours' : route.anchor === 'left' ? 'left' : route.anchor === 'recommended' ? 'recommended' : undefined;
 
   return (
-    <div className={`studio ${chatOpen ? 'chat-open' : ''}`}>
-      <aside className="side">
-        <img className="side-logo" src={whiteWordmark} alt="Brand Muse" />
-        <p className="side-product">Unique Reach</p>
-        <nav>
-          {SECTIONS.map(({ id, label, icon: Icon }) => (
-            <button key={id} className={activeSection === id ? 'active' : ''} onClick={() => goTo(id)}><Icon size={17} />{label}</button>
+    <div className="app">
+      <header className="app-topbar">
+        <a className="app-brand" href="#/overview" aria-label="Unique Reach home">
+          <img src={whiteWordmark} alt="Brand Muse" />
+          <span className="eyebrow-wide">Unique Reach</span>
+        </a>
+        <nav className="app-nav" aria-label="Sections">
+          {NAV.map(({ label, icon: Icon, screen, anchor }) => (
+            <button type="button" key={label} className={route.screen === screen && (route.anchor || '') === (anchor ?? '') ? 'active' : ''} onClick={() => navigate(screen, anchor)}>
+              <Icon size={16} />{label}
+            </button>
           ))}
         </nav>
-        {datasets.length > 0 && (
-          <div className="side-datasets">
-            <span>Your searches</span>
-            {datasets.map((d) => (
-              <button key={d.id} className={d.active ? 'active' : ''} onClick={() => !d.active && void activate(d.id)} title={d.prompt ?? d.name}>
-                <i />{d.name}
-              </button>
-            ))}
-          </div>
-        )}
-        <p className="side-foot">Overlap is measured from sampled commenter accounts; this demo's data source is shown with the campaign. Counts are commenter accounts, not unique viewers.</p>
-      </aside>
+        <div className="app-topbar-right">
+          <button type="button" className="app-icon-btn" aria-label="Notifications" title={loading || stale ? 'Updating the plan' : 'Plan is up to date'}>
+            {loading || stale ? <Loader2 size={20} className="spin" /> : <Bell size={20} />}
+          </button>
+          <button type="button" className="app-account" aria-label="Account"><User size={22} /></button>
+        </div>
+      </header>
 
-      <main className="stage">
-        <section id="discover" className={`stage-section ${flash === 'discover' ? 'flash' : ''}`}>
-          <div className="hello">
-            <div>
-              <h1>Plan a creator campaign</h1>
-              <p>Describe what you&rsquo;re launching. We find relevant YouTube creators, measure where their audiences overlap, and pick a roster.</p>
-            </div>
-            {!chatOpen && <button className="btn-secondary" onClick={() => setChatOpen(true)}><MessageCircle size={16} />Ask Muse</button>}
-          </div>
-          <div className="hero">
-            <div className="hero-input">
-              <Sparkles size={18} />
-              <input value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void discover(); }}
-                placeholder="e.g. Launching a cold brew concentrate for people who make iced coffee at home" maxLength={300} disabled={job?.status === 'running'} />
-              <button className="btn-primary" onClick={() => void discover()} disabled={!discoveryEnabled || !prompt.trim() || job?.status === 'running'}>
-                {job?.status === 'running' ? <Loader2 className="spin" size={16} /> : <Search size={16} />}Find creators
+      {route.screen === 'overview' && (
+        <div className="app-screen">
+          <section className="app-hero">
+            <div className="app-hero-brand"><Mark size={32} /><img src={whiteWordmark} alt="Brand Muse" /></div>
+            <h1 className="hero-question">What are you launching?</h1>
+            <form className="app-prompt" onSubmit={(e) => { e.preventDefault(); void discover(); }}>
+              <input ref={promptRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} aria-label="Campaign brief" maxLength={300} disabled={job?.status === 'running'}
+                placeholder="Describe what you're launching: the product, who it's for, which platforms" />
+              <kbd aria-hidden="true">&#8984;K</kbd>
+              <button type="button" className={`app-prompt-btn ${settingsOpen ? 'on' : ''}`} aria-label="Platforms and plan size" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((v) => !v)}><SlidersHorizontal size={18} /></button>
+              <button type="submit" className="app-prompt-btn solid" aria-label="Find creators" disabled={!discoveryEnabled || !prompt.trim() || job?.status === 'running'}
+                title={discoveryEnabled ? 'Find creators' : 'Creator search needs the YouTube and Gemini keys on the server'}>
+                {job?.status === 'running' ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
               </button>
-            </div>
-            <label className={`hero-option ${upriverStatus?.configured ? '' : 'locked'}`}>
-              <input type="checkbox" checked={crossPlatform && Boolean(upriverStatus?.configured)} onChange={(e) => setCrossPlatform(e.target.checked)}
-                disabled={job?.status === 'running' || !upriverStatus?.configured} />
-              Plan across YouTube, Instagram and TikTok{' '}
-              <small>{upriverStatus?.configured
-                ? '(Upriver finds Instagram/TikTok creators and audience profiles · up to ~200 credits)'
-                : '(needs the Upriver API key: add UPRIVER_API_KEY to .env and restart)'}</small>
-            </label>
-            {upriverStatus?.configured && (
-              <label className="hero-option">
-                <input type="checkbox" checked={useUpriver} onChange={(e) => setUseUpriver(e.target.checked)} disabled={job?.status === 'running'} />
-                Also add lookalike YouTube creators from Upriver <small>(up to ~48 credits · {upriverStatus.creditsRemaining} left this session)</small>
-              </label>
-            )}
-            {!discoveryEnabled && <p className="hero-note">Creator search needs the YouTube and Gemini keys on the server. You can still plan with saved searches.</p>}
+              {settingsOpen && (
+                <div className="app-popover" ref={popoverRef} role="dialog" aria-label="Platforms and plan size">
+                  <div className="app-popover-row">
+                    <label className="app-field-label grow"><span>Creators to recommend</span>
+                      <span className="app-count">
+                        <button type="button" aria-label="Fewer creators" onClick={() => update({ planningContext: { ...inputs.planningContext, creatorCount: Math.max((inputs.planningContext.creatorCount ?? 0) - 1, 0) } })}>&minus;</button>
+                        <b>{inputs.planningContext.creatorCount ? inputs.planningContext.creatorCount : 'Any'}</b>
+                        <button type="button" aria-label="More creators" onClick={() => update({ planningContext: { ...inputs.planningContext, creatorCount: Math.min((inputs.planningContext.creatorCount ?? 0) + 1, Math.max(eligible.length, 1)) } })}>+</button>
+                      </span>
+                    </label>
+                  </div>
+                  {crossPlatform && platformsPresent.length > 1 && (
+                    <div className="app-field-label"><span>Platforms in the plan</span>
+                      <div className="app-platform-toggles">
+                        {platformsPresent.map((p) => {
+                          const on = platformOn(p);
+                          return (
+                            <label key={p} className={`app-toggle ${on ? 'on' : ''}`} title={on ? `Leave ${PLATFORM_LABEL[p]} out of the plan` : `Plan with ${PLATFORM_LABEL[p]} again`}>
+                              <input type="checkbox" checked={on} onChange={() => togglePlatform(p)} />
+                              <PlatformGlyph platform={p} size={20} />{PLATFORM_LABEL[p]}
+                              <span className="app-chip-count">{eligible.filter((c) => platformOf(c) === p).length}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <span className="app-footnote">Switching a platform off removes its creators from the plan and from your roster; switching it back on restores them. At least one stays on.</span>
+                    </div>
+                  )}
+                  <div className="app-popover-row">
+                    <label className="app-field-label grow"><span>Save this plan as</span>
+                      <input className="app-input" aria-label="Campaign name" maxLength={80} value={saveName} onChange={(e) => setSaveName(e.target.value)} />
+                    </label>
+                    <button type="button" className="app-btn-primary" disabled={saving || loading || chatBusy || !saveName.trim()} onClick={() => void saveCurrentCampaign()}>Save</button>
+                  </div>
+                  {savedHere.length > 0 && (
+                    <label className="app-field-label"><span>Load a saved plan</span>
+                      <select className="app-select" aria-label="Load campaign" value="" disabled={loading || chatBusy} onChange={(e) => void restoreCampaign(e.target.value)}>
+                        <option value="">Choose a saved plan</option>
+                        {savedHere.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  {saveStatus && <span className="app-footnote" role="status">{saveStatus}</span>}
+                </div>
+              )}
+            </form>
+            <p className="app-sourcing">
+              <span className="app-sourcing-glyphs">{(platformsOn.length ? platformsOn : PLATFORMS).map((p) => <PlatformGlyph key={p} platform={p} size={20} />)}</span>
+              {sourcing}
+            </p>
             {job && (
-              <div className={`stepper ${job.status}`}>
-                <div className="stepper-steps">
+              <div className={`app-stepper ${job.status}`} aria-live="polite">
+                <div className="app-stepper-steps">
                   {STEPS.map(([id, label], i) => {
                     const state = job.status === 'done' || i < stepIndex ? 'done' : i === stepIndex ? (job.status === 'error' ? 'error' : 'now') : 'todo';
-                    return <div key={id} className={`step ${state}`}><span>{state === 'done' ? <Check size={12} /> : i + 1}</span>{label}</div>;
+                    return <span key={id} className={`step ${state}`}>{state === 'done' ? <Check size={11} /> : null} {label}</span>;
                   })}
                 </div>
-                <div className="bar"><i style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>
+                <div className="app-bar app-bar-6"><i style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>
                 <p>{job.status === 'error' ? job.error : job.message}{job.units ? ` · ~${job.units} API units` : ''}</p>
               </div>
             )}
-          </div>
-          <div className="campaign-strip">
-            <div className="strip-item grow">
-              <span>Campaign</span>
-              <strong>{campaign?.name ?? 'Loading…'}</strong>
-              <small>{activeDataset?.prompt ? `“${activeDataset.prompt}” · ` : ''}{eligible.length} creators in the plan pool{evidence?.thinCreators ? ` · ${evidence.thinCreators} set aside for too few comments` : ''}</small>
+            <div className="app-chip-row center">
+              {savedHere.slice(0, 3).map((c) => <Chip key={c.id} onClick={() => void restoreCampaign(c.id)} title="Load this saved plan">{c.name}</Chip>)}
+              {otherSearches.map((d) => <Chip key={d.id} onClick={() => void activate(d.id)} title={d.prompt ?? d.name}>{d.name}</Chip>)}
+              <Chip onClick={() => void send('Pressure-test the current roster')} disabled={!aiEnabled} title={aiEnabled ? undefined : 'Live AI is not configured'}>Pressure-test the current roster</Chip>
+              <Chip onClick={() => navigate('creators', 'whynot')}><Sparkles size={14} /> Why creators were left out</Chip>
             </div>
-            <label className="strip-item">
-              <span>Budget</span>
-              <div className="money"><b>$</b><input inputMode="numeric" value={inputs.budget.toLocaleString('en-US')}
-                onChange={(e) => update({ budget: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 })} aria-label="Budget" /></div>
-            </label>
-            <label className="strip-item">
-              <span>Creators</span>
-              <div className="count-step">
-                <button type="button" aria-label="Fewer creators" disabled={creators.every(c => c.source === 'synthetic')} onClick={() => update({ planningContext: { ...inputs.planningContext, creatorCount: Math.max((inputs.planningContext.creatorCount ?? 0) - 1, 0) } })}>−</button>
-                <b>{inputs.planningContext.creatorCount ? inputs.planningContext.creatorCount : 'Any'}</b>
-                <button type="button" aria-label="More creators" disabled={creators.every(c => c.source === 'synthetic')} onClick={() => update({ planningContext: { ...inputs.planningContext, creatorCount: Math.min((inputs.planningContext.creatorCount ?? 0) + 1, Math.max(eligible.length, 1)) } })}>+</button>
-              </div>
-            </label>
-            <div className={`live-pill ${loading || stale ? 'busy' : ''}`} aria-live="polite">
-              {loading || stale ? <Loader2 className="spin" size={14} /> : <BarChart3 size={14} />}{loading || stale ? 'Updating plan…' : 'Plan is up to date'}
-            </div>
-          </div>
-          <p className="hero-note">{datasetLabel}</p>
-          <div className="campaign-strip" aria-label="Saved campaigns">
-            <label className="strip-item grow"><span>Campaign name</span><input aria-label="Campaign name" maxLength={80} value={saveName} onChange={e => setSaveName(e.target.value)} /></label>
-            <button className="btn-secondary" disabled={saving || loading || chatBusy || !saveName.trim()} onClick={() => void saveCurrentCampaign()}>Save campaign</button>
-            <label className="strip-item"><span>Load campaign</span><select aria-label="Load campaign" value="" disabled={loading || chatBusy} onChange={e => void restoreCampaign(e.target.value)}>
-              <option value="">Choose a saved campaign</option>
-              {saved.filter(c => c.datasetVersion === datasetVersion).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select></label>
-            <p role="status">{saveStatus}</p>
-          </div>
-          {error && <p className="alert" role="alert">{error}</p>}
-          {plan?.countNote && !stale && <p className="notice">{plan.countNote}</p>}
-          {evidence && evidence.strength !== 'strong' && (
-            <p className={`evidence-note ${evidence.strength}`}>
-              {evidence.strength === 'thin' ? 'Thin evidence: ' : 'Limited evidence: '}
-              a typical creator here has about {evidence.medianSampledCommenters.toLocaleString('en-US')} sampled commenters, so small overlap differences are rough. Channels with comments turned off (common for kids&rsquo; content) can&rsquo;t be measured.
-            </p>
-          )}
-        </section>
-
-        <section id="overview" className={`stage-section ${flash === 'overview' ? 'flash' : ''}`}>
-          {delta && (
-            <div className="delta rise" key={`${delta.added.join()}-${delta.removed.join()}-${delta.overlapTo}-${delta.spendTo}`}>
-              <div className="delta-title"><strong>{delta.subject === 'roster' ? 'Your roster changed' : 'The plan changed'}</strong>
-                <span>{delta.added.length || delta.removed.length
-                  ? [delta.added.length ? `Added ${delta.added.map((id) => names[id]).join(', ')}` : '', delta.removed.length ? `Removed ${delta.removed.map((id) => names[id]).join(', ')}` : ''].filter(Boolean).join(' · ')
-                  : delta.subject === 'roster' ? 'Same creators in your roster' : 'Same creators in the plan'}</span>
-              </div>
-              <div className="delta-stats">
-                <DeltaStat label="Audience overlap" from={`${(delta.overlapFrom * 100).toFixed(1)}%`} to={`${(delta.overlapTo * 100).toFixed(1)}%`} good={delta.overlapTo <= delta.overlapFrom} same={Math.abs(delta.overlapTo - delta.overlapFrom) < 0.0005} />
-                <DeltaStat label="Commenters reached" from={compact(delta.reachFrom)} to={compact(delta.reachTo)} good={delta.reachTo >= delta.reachFrom} same={delta.reachTo === delta.reachFrom} />
-                <DeltaStat label="Spend" from={money(delta.spendFrom)} to={money(delta.spendTo)} good={delta.spendTo <= delta.spendFrom} same={delta.spendTo === delta.spendFrom} />
-              </div>
-              <button className="btn-ghost" onClick={() => { const prev = delta.previous; setDelta(null); setInputs(prev); }}>Undo</button>
-            </div>
-          )}
-          {plan?.rosterDiagnostics ? (
-            <Glance key={`${plan.recommended.ids.join('|')}-${plan.budget}`} result={plan} creatorCount={eligible.length} onExplain={() => goTo('method')} />
-          ) : <div className="placeholder">Run the plan to see the overview.</div>}
-          {recDiag && plan && (
-            <div className="roster-cards">
-              {plan.recommended.ids.map((id, i) => (
-                <div className="roster-card rise" style={{ animationDelay: `${i * 50}ms` }} key={id}>
-                  <span className="avatar">{(names[id] ?? '?').replace(/^@/, '').slice(0, 1).toUpperCase()}</span>
-                  <div><strong>{names[id]}</strong><small>{creators.find((c) => c.id === id)?.category} · {money(inputs.costs[id] ?? 0)}</small></div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section id="creators" className={`stage-section panel-lite ${flash === 'creators' ? 'flash' : ''}`}>
-          <div className="section-head">
-            <div><h2>Creators</h2><p>Purple rows are in the plan. Exclude, require or re-price a creator and the plan updates instantly.{rosterBasis ? ` Your starting roster: ${rosterBasis.charAt(0).toLowerCase()}${rosterBasis.slice(1)}` : ''}</p></div>
-            <label className="search-lite"><Search size={15} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" /></label>
-          </div>
-          <div className="tabs">
-            {([['recommended', 'In the plan'], ['roster', 'Your roster'], ['left', 'Left out'], ['all', 'All']] as const).map(([id, label]) => (
-              <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>{label}</button>
-            ))}
-          </div>
-          {datasetKind === 'crossplatform' && (
-            <div className="tabs platform-tabs">
-              {([['all', 'All platforms'], ['youtube', 'YouTube'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']] as const).map(([id, label]) => (
-                <button key={id} className={platformFilter === id ? 'active' : ''} onClick={() => setPlatformFilter(id)}>
-                  {label}{id !== 'all' && <span className="tab-count">{creators.filter((c) => c.platform === id && c.eligibilityStatus !== 'ineligible').length}</span>}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="clist">
-            {rows.length === 0 && <p className="placeholder small">No creators here.</p>}
-            {rows.map((c) => {
-              const status = statusOf(c.id);
-              const why = leftOut.get(c.id);
-              const open = openRow === c.id;
-              return (
-                <div key={c.id} className={`crow s-${status} ${open ? 'open' : ''}`}>
-                  <div className="crow-main">
-                    <input type="checkbox" checked={inputs.currentRoster.includes(c.id)} aria-label={`${c.name} is in your roster`}
-                      onChange={() => update({ currentRoster: inputs.currentRoster.includes(c.id) ? inputs.currentRoster.filter((x) => x !== c.id) : [...inputs.currentRoster, c.id] })} />
-                    <span className="avatar">{c.name.replace(/^@/, '').slice(0, 1).toUpperCase()}</span>
-                    <div className="crow-name"><strong>{c.platform && datasetKind === 'crossplatform' && <span className={`plat plat-${c.platform} plat-inline`}>{c.platform === 'tiktok' ? 'TikTok' : c.platform === 'instagram' ? 'Instagram' : 'YouTube'}</span>}{c.name}{c.foundBy === 'upriver' && <span className="found-by">Upriver lookalike</span>}</strong><small>{datasetKind === 'crossplatform' ? `${c.category} · ${compact(c.followers ?? c.estimatedViews)} followers` : `${c.category} · ${compact(c.estimatedViews)} views`}</small></div>
-                    <span className={`badge b-${status}`}>
-                      {status === 'recommended' ? 'In the plan' : status === 'required' ? 'Required' : status === 'excluded' ? 'Excluded'
-                        : status === 'left' ? (why && Math.round(why.alreadyCoveredShare * 100) >= 1 ? `${Math.round(why.alreadyCoveredShare * 100)}% already reached` : 'Not picked') : ''}
-                    </span>
-                    <span className="crow-quote">{money(inputs.costs[c.id] ?? c.baseCost)}</span>
-                    <button className="btn-ghost" onClick={() => setOpenRow(open ? '' : c.id)} aria-expanded={open}>
-                      <ChevronRight size={16} className={open ? 'rot' : ''} />
-                    </button>
-                  </div>
-                  {open && (
-                    <div className="crow-detail">
-                      {datasetKind === 'crossplatform' && c.audienceDescription && <p className="muted">Upriver: {c.audienceDescription}</p>}
-                      {datasetKind === 'crossplatform' && <p className="muted">Audience: {c.audienceSummary || 'No audience data from Upriver'} · overlap with others is {c.overlapEvidence === 'estimated' ? 'estimated from audience profiles' : 'measured with other YouTube creators, estimated with Instagram/TikTok'}</p>}
-                      <p>{status === 'recommended' ? 'Picked because it adds the most new audience for its quote at this budget.'
-                        : why ? (why.overlapsWith.length ? `${Math.round(why.alreadyCoveredShare * 100)}% of its commenters are already reached through ${why.overlapsWith.map((o) => o.creatorName).join(', ')}. ${why.reason}` : why.reason)
-                        : 'Run the plan to see how this creator compares.'}</p>
-                      {c.sponsorMentions?.brands.length ? <p className="muted">Mentions in descriptions: {c.sponsorMentions.brands.map((b) => b.brand).join(', ')}</p> : null}
-                      <div className="crow-actions">
-                        <label className="money small"><b>$</b><input inputMode="numeric" value={(inputs.costs[c.id] ?? c.baseCost).toLocaleString('en-US')}
-                          onChange={(e) => update({ costs: { ...inputs.costs, [c.id]: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 } })} aria-label={`Quote for ${c.name}`} /></label>
-                        <button className={`btn-secondary ${status === 'required' ? 'on' : ''}`} onClick={() => update({ include: inputs.include.includes(c.id) ? inputs.include.filter((x) => x !== c.id) : [...inputs.include, c.id], exclude: inputs.exclude.filter((x) => x !== c.id) })}>
-                          {status === 'required' ? 'Required' : 'Require'}
-                        </button>
-                        <button className={`btn-secondary ${status === 'excluded' ? 'on' : ''}`} onClick={() => update({ exclude: inputs.exclude.includes(c.id) ? inputs.exclude.filter((x) => x !== c.id) : [...inputs.exclude, c.id], include: inputs.include.filter((x) => x !== c.id) })}>
-                          {status === 'excluded' ? 'Excluded' : 'Exclude'}
-                        </button>
-                        <button className="btn-ghost" onClick={() => void send(`Why is ${c.name} ${status === 'recommended' ? 'in' : 'not in'} the plan?`)} disabled={!aiEnabled}>Ask Muse why</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        <section id="map" className={`stage-section ${flash === 'map' ? 'flash' : ''}`}>
-          {creators.some(c => c.source === 'observed-public') && <ExploreOverlap key={campaign?.id} aiEnabled={aiEnabled} />}
-        </section>
-
-        <section id="platforms" className={`stage-section panel-lite ${flash === 'platforms' ? 'flash' : ''}`}>
-          <div className="section-head">
-            <div>
-              <h2>Beyond YouTube</h2>
-              <p>Creators on Instagram and TikTok with a similar niche and audience to the ones in your plan, from Upriver. This is modeled similarity, not measured overlap.</p>
-            </div>
-            <button className="btn-primary" disabled={!upriverStatus?.configured || lookalikeBusy || !plan?.recommended.ids.length} onClick={() => void findLookalikes()}>
-              {lookalikeBusy ? <Loader2 className="spin" size={16} /> : <Globe size={16} />}Find on Instagram &amp; TikTok
-            </button>
-          </div>
-          <p className="muted-line">
-            {!upriverStatus?.configured ? 'Add UPRIVER_API_KEY to the server .env to turn this on.'
-              : `Looks up the top ${Math.min(plan?.recommended.ids.length ?? 0, 3)} creators in the plan · about ${Math.min(plan?.recommended.ids.length ?? 0, 3) * 16} credits · ${upriverStatus.creditsRemaining} of ${upriverStatus.creditCap} left this session · repeat lookups are free`}
-          </p>
-          {lookalikeNote && <p className="notice">{lookalikeNote}</p>}
-          {lookalikes.map((g) => (
-            <div className="look-group" key={g.anchorId}>
-              <h3>Like <strong>{g.anchorName}</strong>{g.cached && <small> · saved result</small>}</h3>
-              {g.results.length === 0 ? (
-                <p className="placeholder small">{g.incomplete ? 'Upriver ran out of time before finishing. Try again later.' : 'No similar Instagram or TikTok creators found.'}</p>
-              ) : (
-                <div className="look-grid">
-                  {g.results.map((r, i) => (
-                    <div className={`look-card rise ${r.url && picked[r.url] ? 'picked' : ''}`} style={{ animationDelay: `${i * 40}ms` }} key={`${r.platform}-${r.handle}-${i}`}>
-                      <div className="look-top">
-                        <label className="look-pick">
-                          <input type="checkbox" disabled={!r.url || (!picked[r.url!] && Object.keys(picked).length >= 8)} checked={Boolean(r.url && picked[r.url])}
-                            onChange={() => setPicked((cur) => { const next = { ...cur }; if (next[r.url!]) delete next[r.url!]; else next[r.url!] = { url: r.url!, name: r.name }; return next; })} />
-                          <span className={`plat plat-${r.platform}`}>{r.platform === 'tiktok' ? 'TikTok' : r.platform === 'instagram' ? 'Instagram' : r.platform}</span>
-                        </label>
-                        {r.url && <a href={r.url} target="_blank" rel="noreferrer noopener" aria-label={`Open ${r.name}`}><ExternalLink size={13} /></a>}
-                      </div>
-                      <strong>{r.name}</strong>
-                      <small>{r.handle ? `@${String(r.handle).replace(/^@/, '')}` : ''}{r.followers ? ` · ${compact(r.followers)} followers` : r.followerBucket ? ` · ${r.followerBucket.replace(/_/g, '–')} followers` : ''}</small>
-                      {r.score !== null && <div className="look-score"><i style={{ width: `${Math.round(r.score * 100)}%` }} /><span>{Math.round(r.score * 100)}% similar</span></div>}
-                      {r.otherChannels.length > 0 && <small className="muted">Also on {r.otherChannels.map((o) => o.platform).join(', ')}</small>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </section>
-
-        {lookalikes.length > 0 && (
-          <section className="stage-section panel-lite match-panel">
-            <div className="section-head">
-              <div>
-                <h2>Audience profile match</h2>
-                <p>Tick Instagram or TikTok creators above, then compare their audiences with each other and with the top {Math.min(plan?.recommended.ids.length ?? 0, 3)} creators in your plan. Based on audience countries, gender mix and age range from Upriver.</p>
-              </div>
-              <button className="btn-primary" disabled={matchBusy || Object.keys(picked).length === 0 || !upriverStatus?.configured} onClick={() => void compareAudiences()}>
-                {matchBusy ? <Loader2 className="spin" size={16} /> : <Users size={16} />}Compare {Object.keys(picked).length + Math.min(plan?.recommended.ids.length ?? 0, 3)} profiles
-              </button>
-            </div>
-            <p className="muted-line">About 8 credits per creator not already looked up · {upriverStatus?.creditsRemaining ?? 0} left this session</p>
-            {matchResult && (() => {
-              const byUrl = Object.fromEntries(matchResult.profiles.map((p) => [p.url, p]));
-              const band = (m: number) => (m >= 0.7 ? ['high', 'Very similar audiences'] : m >= 0.4 ? ['mid', 'Some similarity'] : ['low', 'Different audiences']);
-              return (
-                <div className="match-grid">
-                  <div className="match-profiles">
-                    {matchResult.profiles.map((p) => (
-                      <div className={`match-profile ${p.hasData ? '' : 'nodata'}`} key={p.url}>
-                        <span className={`plat plat-${p.platform || 'youtube'}`}>{p.source === 'plan' ? 'In your plan' : p.platform === 'tiktok' ? 'TikTok' : p.platform === 'instagram' ? 'Instagram' : p.platform}</span>
-                        <strong>{p.name}</strong>
-                        <small>{p.summary}</small>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="match-pairs">
-                    {matchResult.pairs.length === 0 && <p className="placeholder small">Upriver had no comparable audience data for these creators.</p>}
-                    {matchResult.pairs.map((pair, i) => {
-                      const [level, label] = band(pair.match);
-                      return (
-                        <div className={`match-pair ${level}`} key={`${pair.a}-${pair.b}`} style={{ animationDelay: `${i * 40}ms` }}>
-                          <div className="mp-names"><strong>{byUrl[pair.a]?.name}</strong><span>and</span><strong>{byUrl[pair.b]?.name}</strong></div>
-                          <div className="mp-bar"><i className="grow-x" style={{ width: `${Math.round(pair.match * 100)}%` }} /></div>
-                          <div className="mp-meta"><b>{Math.round(pair.match * 100)}%</b><span>{label}{pair.complete ? '' : ` · compared on ${pair.basis.join(', ')}`}</span></div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-            {matchResult && <p className="aud-foot">{matchResult.stopped ? `${matchResult.stopped} ` : ''}{matchResult.note} {matchResult.creditsCharged ? `Used about ${matchResult.creditsCharged} credits.` : 'Used saved results, no credits.'}</p>}
           </section>
-        )}
 
-        <section id="method" className={`stage-section panel-lite method ${flash === 'method' ? 'flash' : ''}`}>
-          <div className="section-head"><div><h2>How estimates work</h2><p>Where every overlap number comes from, and how much to trust it.</p></div></div>
-          <div className="method-grid">
-            <div className="method-card">
-              <span className="tag tag-little">Measured</span>
-              <h3>YouTube to YouTube</h3>
-              <p>We read public comments on each channel&rsquo;s recent videos. If the same account comments on both channels, that&rsquo;s a shared audience member. Overlap = shared commenters ÷ the smaller channel&rsquo;s commenters. It&rsquo;s a sample of real accounts, not every viewer.</p>
-            </div>
-            <div className="method-card">
-              <span className="tag tag-budget">Estimated</span>
-              <h3>Any pair with Instagram or TikTok</h3>
-              <p>Instagram and TikTok don&rsquo;t let us read other creators&rsquo; comments or followers, so we estimate. Upriver provides each creator&rsquo;s <b>audience profile</b>: main gender and its share, age range, main countries (sometimes without percentages), main language, a short description, and a confidence rating (high, medium or low) for each part. Upriver builds these from its own creator index and doesn&rsquo;t publish exactly how, so treat them as Upriver&rsquo;s best estimate of who follows the creator.</p>
-            </div>
-            <div className="method-card">
-              <h3>Audience profile match</h3>
-              <p>We compare two profiles: <b>countries</b> ({Math.round((method?.weights?.geography ?? 0.4) * 100)}% of the score: how much of both audiences sits in the same countries; when Upriver lists countries without percentages they count equally), <b>gender mix</b> ({Math.round((method?.weights?.gender ?? 0.2) * 100)}%), <b>age range</b> ({Math.round((method?.weights?.age ?? 0.2) * 100)}%: how much the ranges overlap) and <b>language</b> ({Math.round((method?.weights?.language ?? 0.2) * 100)}%). A part Upriver marks low confidence counts for less. 100% means the profiles look the same, which makes overlap possible, not certain.</p>
-            </div>
-            <div className="method-card">
-              <h3>From match to estimated overlap</h3>
-              <p>A profile match isn&rsquo;t a count of shared followers, so we scale it. Where two YouTube creators have both a measured overlap and a profile match, we learn how the two relate. Current factor: <b>{method ? method.kappa.toFixed(2) : '—'}</b>{method ? (method.calibrationPairs >= 3 ? `, learned from ${method.calibrationPairs} YouTube pairs` : ` (default; too few YouTube pairs with both numbers to learn it)`) : ''}. Estimated overlap = factor × profile match. Creators with no Upriver audience data are assumed to be a {Math.round((method?.unknownMatch ?? 0.35) * 100)}% match and labeled <b>assumed</b>.</p>
-            </div>
-            <div className="method-card">
-              <h3>Estimated unique followers</h3>
-              <p>Reach is followers on every platform, so creators compare fairly. For a roster we add everyone&rsquo;s followers, then subtract the estimated shared followers for each pair (overlap × the smaller audience). The plan picks the lowest-overlap roster that still reaches at least as many estimated unique followers as yours.</p>
-            </div>
-            <div className="method-card">
-              <h3>Quotes and limits</h3>
-              <p>When planning across platforms, every quote is modeled per 1,000 followers so platforms compare fairly: about ${method?.quotePer1k?.youtube ?? 20} on YouTube, ${method?.quotePer1k?.instagram ?? 10} on Instagram and ${method?.quotePer1k?.tiktok ?? 7.5} on TikTok. These are rough market rates, not quotes. Edit any quote in the creators list. Upriver&rsquo;s &ldquo;similar creators&rdquo; score is used only to suggest lookalikes and never feeds these numbers.</p>
-            </div>
-          </div>
-        </section>
+          <section className="app-section" aria-label="Plan summary" style={{ gap: 16 }}>
+            {error && <p className="app-alert" role="alert">{error}</p>}
+            {plan && rec && cur ? (
+              <div className="app-grid-3">
+                <StatCard accent value={pct(rec.sharedRate)} label={crossPlatform ? 'Estimated overlap' : 'Audience overlap'} caption="Recommended plan · lower is better" />
+                <StatCard value={compact(plan.recommended.proxyReach)} label={crossPlatform ? 'Unique followers' : 'Commenters reached'} caption={cur.ids.length ? `vs ${compact(plan.current.proxyReach)} across ${rosterList ? 'your whole list' : 'your roster'}` : 'Tick creators to compare your roster'} />
+                <StatCard value={`${rec.ids.length} of ${eligible.length}`} label="Recommended creators" caption={cur.ids.length ? `${rosterList ? 'your list' : 'your roster'} overlaps ${pct(cur.sharedRate)}` : 'from the pool'} />
+              </div>
+            ) : <div className="app-empty">{error ? 'The plan could not be computed.' : 'Planning…'}</div>}
+            {caveat && <p className="app-caveat">{caveat}</p>}
+            {delta && (delta.added.length > 0 || delta.removed.length > 0) && (
+              <div className="app-caveat app-undo-line" style={{ flexWrap: 'wrap' }}>
+                <span>{delta.subject === 'roster' ? (rosterList ? 'Your list changed' : 'Your roster changed') : 'The recommendation changed'}: {[delta.added.length ? `added ${delta.added.map((id) => names[id] ?? id).join(', ')}` : '', delta.removed.length ? `removed ${delta.removed.map((id) => names[id] ?? id).join(', ')}` : ''].filter(Boolean).join(' · ')}.</span>
+                <span className="app-delta-stats">
+                  <span>Overlap <s>{pct(delta.overlapFrom)}</s> <b>{pct(delta.overlapTo)}</b></span>
+                  <span>Reach <s>{compact(delta.reachFrom)}</s> <b>{compact(delta.reachTo)}</b></span>
+                </span>
+                <button type="button" className="app-link" onClick={() => { const prev = delta.previous; setDelta(null); setInputs(prev); }}>Undo</button>
+              </div>
+            )}
+          </section>
 
-        <section id="whynot" className={`stage-section ${flash === 'whynot' ? 'flash' : ''}`}>
-          {plan?.whyNot && <WhyNotPanel rows={plan.whyNot} stale={stale} />}
-        </section>
-      </main>
-
-      {chatOpen && (
-        <aside className="chat" aria-label="Muse assistant">
-          <div className="chat-head">
-            <div className="chat-title"><span className="chat-orb"><Sparkles size={15} /></span><div><strong>Muse</strong><small>{aiEnabled ? 'Gemini connected' : 'AI unavailable'}</small></div></div>
-            <button className="btn-ghost" onClick={() => setChatOpen(false)} aria-label="Close chat"><X size={16} /></button>
-          </div>
-          <div className="chat-body">
-            {messages.map((m, i) => (
-              <div key={i} className={`msg ${m.role} ${m.error ? 'err' : ''}`}>
-                <p>{m.text}</p>
-                {m.change && <div className={`msg-change ${m.change.changed ? 'yes' : 'no'}`}>{m.change.text}</div>}
-                {m.section && m.role === 'assistant' && SECTIONS.some((s) => s.id === m.section) && (
-                  <button className="msg-link" onClick={() => goTo(m.section!)}>Show {SECTIONS.find((s) => s.id === m.section)!.label.toLowerCase()} <ChevronRight size={13} /></button>
-                )}
-                {m.discoverPrompt && (
-                  <button className="msg-link" disabled={!discoveryEnabled || job?.status === 'running'} onClick={() => void discover(m.discoverPrompt!)}>
-                    <Search size={13} /> Find creators for &ldquo;{m.discoverPrompt}&rdquo;
+          <section className="app-section" aria-label="Recommended roster">
+            <EyebrowRow label={rosterList ? 'Recommended from your list' : 'Recommended roster'} link={rosterList ? `Your ${eligible.length} creators` : 'View all'} onLink={() => navigate('creators', rosterList ? 'yours' : 'recommended')} />
+            {insight && <Insight>{insight}</Insight>}
+            {plan && (
+              <div className="app-grid-2">
+                {plan.recommended.ids.map((id) => {
+                  const c = byId.get(id);
+                  if (!c) return null;
+                  const ov = overlapFor(id);
+                  const platform = platformOf(c);
+                  const status = statusOf(id);
+                  return (
+                    <article className="app-card app-creator-card" key={id}>
+                      <div className="app-creator-top">
+                        <Avatar name={c.name} platform={crossPlatform ? platform : undefined} />
+                        <div className="app-creator-id">
+                          <strong>{c.name}</strong>
+                          <span>{PLATFORM_LABEL[platform]} &middot; {topicOf(c)}</span>
+                          <small>{status === 'required' ? 'Required' : 'Recommended'}</small>
+                        </div>
+                      </div>
+                      <div className="app-creator-stats">
+                        <div><strong>{compact(c.followers ?? c.estimatedViews)}</strong><span>{crossPlatform || c.followers ? 'Followers' : 'Views'}</span></div>
+                        <div><strong>{ov ? pct(ov.share) : '—'}</strong><span>Overlap{ov && ov.source !== 'measured' ? ` · ${ov.source}` : ''}</span></div>
+                        <div><strong>{ov ? ov.with : '—'}</strong><span>Shares most with</span></div>
+                      </div>
+                    </article>
+                  );
+                })}
+                {eligible.length > plan.recommended.ids.length && (
+                  <button type="button" className="app-card app-more-card" onClick={() => navigate('creators', 'left')}>
+                    {eligible.length - plan.recommended.ids.length} {rosterList ? 'of your creators were left out' : 'more in the pool'}. See why <ChevronRight size={14} />
                   </button>
                 )}
               </div>
-            ))}
-            {chatBusy && <div className="msg assistant typing"><i /><i /><i /></div>}
-            <div ref={chatEnd} />
-          </div>
-          <div className="chat-suggest">
-            {SUGGESTIONS.map((s) => <button key={s} onClick={() => void send(s)} disabled={!aiEnabled || chatBusy}>{s}</button>)}
-          </div>
-          <form className="chat-input" onSubmit={(e) => { e.preventDefault(); void send(); }}>
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={aiEnabled ? 'Ask or tell Muse what to change' : 'Live AI is not configured'} disabled={!aiEnabled} maxLength={1000} />
-            <button className="btn-primary icon" type="submit" disabled={!aiEnabled || chatBusy || !draft.trim()} aria-label="Send"><Send size={16} /></button>
-          </form>
-        </aside>
+            )}
+          </section>
+
+          {plan?.rosterDiagnostics && (
+            <section className="app-section" aria-label="Plan at a glance">
+              <EyebrowRow label="Plan at a glance" link="How estimates work" onLink={() => navigate('methods')} />
+              <div className="app-grid-2">
+                <OverlapBars rosters={plan.rosterDiagnostics.rosters} cross={crossPlatform} />
+                <PickBars steps={plan.steps} cross={crossPlatform} />
+              </div>
+            </section>
+          )}
+        </div>
       )}
+
+      {route.screen === 'creators' && (
+        <CreatorsScreen creators={creators} inputs={inputs} plan={plan} stale={stale} crossPlatform={crossPlatform} rosterList={rosterList} rosterMissing={rosterMissing} rosterSkipped={rosterSkipped} rosterBasis={rosterBasis} graph={graph} graphError={graphError} aiEnabled={aiEnabled}
+          delta={delta} initialFilter={creatorsFilter} statusOf={statusOf} platformOn={platformOn} onUpdate={update} onAsk={(q) => void send(q)} onExplain={() => navigate('methods')} onGraph={setGraph} />
+      )}
+
+      {route.screen === 'methods' && <MethodsScreen method={method} />}
+
+      <MusePanel open={chatOpen} onToggle={setChatOpen} messages={messages} busy={chatBusy} aiEnabled={aiEnabled} draft={draft} onDraft={setDraft} onSend={(t) => void send(t)}
+        suggestions={suggestions} sectionLabel={(s) => SECTION_TARGET[s]?.label ?? null} onSection={goToSection} discoveryEnabled={discoveryEnabled && job?.status !== 'running'} onDiscover={(p) => void discover(p)}
+        rosterEnabled={rosterEnabled && job?.status !== 'running'} attachment={attachment} onAttach={(f) => void attachRoster(f)} onDetach={() => setAttachment(null)} />
     </div>
   );
 }
 
-function DeltaStat({ label, from, to, good, same }: { label: string; from: string; to: string; good: boolean; same: boolean }) {
+function listOf(items: string[]) {
+  return items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+function OverlapBars({ rosters, cross }: { rosters: { current: RosterDiag; recommended: RosterDiag; viewsBaseline: RosterDiag }; cross: boolean }) {
+  const rows = [
+    { key: 'current', label: 'Your roster', color: 'var(--bm-chart-current)', d: rosters.current },
+    { key: 'recommended', label: 'Recommended', color: 'var(--app-accent)', d: rosters.recommended },
+    { key: 'viewsBaseline', label: cross ? 'Top by followers' : 'Top by views', color: 'var(--bm-chart-baseline)', d: rosters.viewsBaseline },
+  ];
+  const max = Math.max(...rows.map((r) => r.d.standalone), 1);
   return (
-    <div className={`delta-stat ${same ? 'same' : good ? 'good' : 'bad'}`}>
-      <span>{label}</span>
-      <strong>{from} <em>{same ? '=' : '→'}</em> {to}</strong>
+    <div className="app-card app-chart">
+      <h3>How much each roster overlaps</h3>
+      <p>Solid bar: {cross ? 'followers' : 'commenters'} reached once. Striped end: the same {cross ? 'followers' : 'commenters'} showing up on another creator in the roster.</p>
+      <div className="app-chart-rows">
+        {rows.map((r) => (
+          <div className="app-chart-row" key={r.key} title={`${r.label}: ${compact(r.d.coverage)} reached once, ${compact(r.d.shared)} overlapping`}>
+            <span>{r.label}</span>
+            <div className="app-track" aria-hidden="true">
+              <i style={{ width: `${(r.d.coverage / max) * 100}%`, background: r.color }} />
+              <i style={{ width: `${(r.d.shared / max) * 100}%`, background: `repeating-linear-gradient(135deg, ${r.color} 0 3px, transparent 3px 7px)` }} />
+            </div>
+            <b>{r.d.ids.length ? pct(r.d.sharedRate) : '—'}</b>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PickBars({ steps, cross }: { steps: Plan['steps']; cross: boolean }) {
+  const max = Math.max(...steps.map((s) => s.marginalProxyReach), 1);
+  return (
+    <div className="app-card app-chart">
+      <h3>What each pick adds</h3>
+      <p>New {cross ? 'followers' : 'commenters'} each creator adds, in the order the plan picked them.</p>
+      {steps.length === 0 ? <div className="app-empty">No picks yet.</div> : (
+        <>
+          <div className="app-columns" aria-hidden="true">
+            {steps.map((s, i) => <div key={`${s.creatorId}-${i}`} style={{ height: `${Math.max((s.marginalProxyReach / max) * 100, 4)}%` }} title={`#${i + 1} ${s.creatorName}: adds ${compact(s.marginalProxyReach)}`} />)}
+          </div>
+          <div className="app-columns-axis">{steps.map((s, i) => <span key={`${s.creatorId}-${i}`}>{i + 1}</span>)}</div>
+          <p className="app-columns-note">pick order &middot; first bar &asymp; {compact(steps[0].marginalProxyReach)}</p>
+        </>
+      )}
     </div>
   );
 }

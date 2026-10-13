@@ -296,7 +296,7 @@ def test_explanations_are_grounded_in_plan_numbers(collected, monkeypatch):
         return lambda req: {"content": [{"type": "text", "text": text}]}
 
     monkeypatch.setattr(ai, "_last_call", None)
-    good = "%s is out: %d%% of its audience is already covered and it costs $%s." % (left["creatorName"], covered, format(int(left["cost"]), ","))
+    good = "%s is out: %d%% of its audience is already covered." % (left["creatorName"], covered)
     assert ai_explain.explain(plan, "why not them?", transport=reply(good))["answer"] == good
 
     monkeypatch.setattr(ai, "_last_call", None)
